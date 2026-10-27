@@ -418,3 +418,38 @@ export function displayTitle(a: Pick<CompanyAction, 'title' | 'markets'>): strin
   if (suffix && onlyOwn(suffix[2])) return suffix[1];
   return title;
 }
+
+// ─── Activity: comments and change events on an action ─────────────────────
+
+export type ActivityKind = 'comment' | 'assigned' | 'status' | 'dismissed' | 'restored';
+
+export interface ActionActivity {
+  id: string;
+  action_id: string;
+  actor_id: string | null;
+  kind: ActivityKind;
+  body: string | null;
+  data: Record<string, unknown>;
+  created_at: string;
+}
+
+export const COMMENT_MAX = 2000;
+
+// "just now", "5 minutes ago", "about 3 hours ago", "2 days ago", then the
+// date itself: the feed reads like a conversation, not a log.
+export function timeAgo(iso: string, now: Date = new Date()): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const s = Math.max(0, Math.round((now.getTime() - then) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} minute${m === 1 ? '' : 's'} ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `about ${h} hour${h === 1 ? '' : 's'} ago`;
+  const d = Math.round(h / 24);
+  if (d < 7) return `${d} day${d === 1 ? '' : 's'} ago`;
+  if (d < 30) { const w = Math.round(d / 7); return `${w} week${w === 1 ? '' : 's'} ago`; }
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const t = new Date(then);
+  return `${t.getDate()} ${months[t.getMonth()]}${t.getFullYear() === now.getFullYear() ? '' : ` ${t.getFullYear()}`}`;
+}

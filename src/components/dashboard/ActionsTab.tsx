@@ -12,7 +12,7 @@
 // plus anything they own; "All" shows everything.
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MapPin, XCircle, ArrowRight, ArrowUpRight, Award, BadgeCheck, Briefcase, Globe, Linkedin, Youtube, Check, ChevronDown, ChevronRight, Lightbulb, ListChecks, CircleDashed, CircleDot, CheckCircle2, ExternalLink, Eye, FileText, Megaphone, MessagesSquare, Send, Star, User, type LucideIcon } from 'lucide-react';
+import { MapPin, XCircle, ArrowRight, ArrowRightLeft, ArrowUpRight, Award, BadgeCheck, Briefcase, Globe, Linkedin, Youtube, Check, ChevronDown, ChevronRight, Lightbulb, ListChecks, CircleDashed, CircleDot, CheckCircle2, Eye, FileText, Lock, Megaphone, MessagesSquare, RotateCcw, Send, Star, User, UserPlus, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useCompanyActions } from '@/hooks/useCompanyActions';
@@ -38,7 +38,7 @@ import { ActionsEmptyState } from './ActionsEmptyState';
 import { GENERAL_KEY, canonicalizeLocationContext, countryCodeFor, type LocationEntry } from '@/utils/locationContext';
 import {
   BOARD_COLUMNS, LANE_LABEL, STATUS_LABEL, typeLabel, buildBoard, cycleLabel, noteParts,
-  sourcesTarget, displayTitle, selectionMarkets, actionScope, isPeopleAction, pickAmplifyLink, type AmplifyLink, readingView, trendText, type ReadingView, DISMISS_REASONS, dismissReasonLabel, type ActionCheck, type CompanyAction, type WorkStatus,
+  sourcesTarget, displayTitle, selectionMarkets, actionScope, isPeopleAction, pickAmplifyLink, type AmplifyLink, readingView, trendText, type ReadingView, DISMISS_REASONS, dismissReasonLabel, timeAgo, COMMENT_MAX, type ActionActivity, type ActionCheck, type CompanyAction, type WorkStatus,
 } from '@/lib/actions';
 
 const db = supabase as any;
@@ -156,11 +156,32 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
   });
   const teammates = teammatesQuery.data ?? [];
 
+  // The open action's feed: comments and change events (company_action_activity).
+  // An error (the table not yet migrated, say) reads as an empty feed.
+  const activityQuery = useQuery({
+    queryKey: ['action-activity', openId],
+    enabled: !!openId,
+    queryFn: async (): Promise<ActionActivity[]> => {
+      const { data, error } = await db.from('company_action_activity')
+        .select('id, action_id, actor_id, kind, body, data, created_at')
+        .eq('action_id', openId)
+        .order('created_at', { ascending: true });
+      return error ? [] : (data || []);
+    },
+  });
+  const activity = useMemo(() => activityQuery.data ?? [], [activityQuery.data]);
+
+  // Everyone named on the board or in the open feed, for profile lookups.
   const peopleIds = useMemo(() => {
     const ids = new Set<string>();
     actions.forEach((a) => a.assignee_id && ids.add(a.assignee_id));
+    activity.forEach((r) => {
+      if (r.actor_id) ids.add(r.actor_id);
+      const d = (r.data || {}) as Record<string, unknown>;
+      for (const k of ['from', 'to']) if (typeof d[k] === 'string') ids.add(d[k] as string);
+    });
     return Array.from(ids).sort();
-  }, [actions]);
+  }, [actions, activity]);
 
   const peopleQuery = useQuery({
     queryKey: ['action-people', peopleIds],
@@ -195,7 +216,10 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
     .filter((c) => c.action_id === id)
     .sort((a, b) => String(b.cycle).localeCompare(String(a.cycle)));
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ['company-actions', orgId] });
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['company-actions', orgId] });
+    queryClient.invalidateQueries({ queryKey: ['action-activity'] });
+  };
   const fail = (e: unknown) => toast.error((e as { message?: string })?.message || 'Something went wrong. Please try again.');
 
   // Permissions are worked out for the viewer: the member being previewed, or
@@ -257,6 +281,20 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
       if (error) throw error;
     },
     onSuccess: () => { toast.success('Restored to suggested.'); refresh(); },
+    onError: fail,
+  });
+
+  // A comment in the open action's feed, in the signed-in user's name (RLS
+  // checks both). Preview mode never reaches here: the box is locked.
+  const addComment = useMutation({
+    mutationFn: async ({ action, body }: { action: CompanyAction; body: string }) => {
+      if (!user) throw new Error('Not signed in');
+      const { error } = await db.from('company_action_activity').insert({
+        action_id: action.id, organization_id: action.organization_id, actor_id: user.id, kind: 'comment', body,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['action-activity'] }),
     onError: fail,
   });
 
@@ -410,14 +448,18 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
             <ActionDetail
               action={openAction}
               checks={checksFor(openAction.id)}
+              activity={activity}
               assigneeName={nameOf(openAction.assignee_id)}
               canChange={canChange(openAction)}
               canAccept={canAccept(openAction)}
               canAssignSelf={!openAction.assignee_id && !!meId}
               members={canReassign(openAction) && teammates.length ? teammates : null}
+              nameOf={nameOf}
+              meId={meId}
               onStatus={(status) => (status === 'done' ? setDoneFor(openAction) : setStatus.mutate({ action: openAction, status }))}
               onAssign={(assigneeId) => assign.mutate({ action: openAction, assigneeId })}
               onAssignSelf={() => user && assign.mutate({ action: openAction, assigneeId: user.id })}
+              onComment={(body) => addComment.mutateAsync({ action: openAction, body })}
               onSeeInSources={seeInSources(openAction)}
               amplifyUrl={amplifyUrlFor(openAction)}
               onAccept={canAccept(openAction) && openAction.work_status === 'open' ? () => setStatus.mutate({ action: openAction, status: 'in_progress' }) : null}
@@ -425,6 +467,7 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
               onDismiss={canDismiss(openAction) ? () => setDismissFor(openAction) : null}
               onRestore={canRestore(openAction) ? () => restore.mutate(openAction) : null}
               busy={setStatus.isPending || assign.isPending || dismiss.isPending || restore.isPending}
+              commentBusy={addComment.isPending}
               locked={lockedReason}
             />
           )}
@@ -453,12 +496,12 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
 }
 
 // "Global" or the one market an action is for (see actionScope).
-function ScopeChip({ action }: { action: CompanyAction }) {
+function ScopeChip({ action, className }: { action: CompanyAction; className?: string }) {
   const scope = actionScope(action);
   const Icon = scope.kind === 'global' ? Globe : MapPin;
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-gray-500">
-      <Icon className="h-3 w-3" />{scope.kind === 'global' ? 'Global' : scope.market}
+    <span className={cn('inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-gray-500', className)}>
+      <Icon className="h-3.5 w-3.5 text-gray-400" />{scope.kind === 'global' ? 'Global' : scope.market}
     </span>
   );
 }
@@ -479,13 +522,13 @@ const WORK_KIND_STYLE: Record<string, { icon: LucideIcon; className: string }> =
 };
 
 // One type label per action; owned content names its channel (typeLabel).
-export function KindLabel({ action }: { action: CompanyAction }) {
+export function KindLabel({ action, className }: { action: CompanyAction; className?: string }) {
   const type = typeLabel(action);
   if (!type) return <span />;
   const style = WORK_KIND_STYLE[type.key] ?? { icon: FileText, className: 'text-gray-600' };
   const Icon = style.icon;
   return (
-    <span className={cn('inline-flex items-center gap-1.5 whitespace-nowrap text-xs', style.className)}>
+    <span className={cn('inline-flex items-center gap-1.5 whitespace-nowrap text-xs', style.className, className)}>
       <Icon className="h-3.5 w-3.5" />{type.label}
     </span>
   );
@@ -582,10 +625,11 @@ function domainOf(action: CompanyAction): string | null {
 const initialsOf = (name: string | null | undefined) =>
   (name ?? '').split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join('') || '?';
 
-function Initials({ name, selected }: { name: string; selected?: boolean }) {
+function Initials({ name, selected, size = 'sm' }: { name: string; selected?: boolean; size?: 'sm' | 'md' }) {
   return (
     <span className={cn(
-      'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-[10px] text-gray-700',
+      'flex shrink-0 items-center justify-center rounded-full bg-[#13274F]/10 font-medium text-[#13274F]',
+      size === 'sm' ? 'h-6 w-6 text-[10px]' : 'h-7 w-7 text-[11px]',
       selected && 'ring-2 ring-blue-500 ring-offset-1',
     )}>
       {initialsOf(name)}
@@ -593,8 +637,9 @@ function Initials({ name, selected }: { name: string; selected?: boolean }) {
   );
 }
 
-// Assignee field: the current owner with their initials; when the viewer may
-// change it, a click opens a searchable list of teammates.
+// Assignee field: the owner with their initials as plain text; when the
+// viewer may change it the row is a quiet button that opens a searchable
+// list of teammates (the chevron shows on hover only).
 function AssigneePicker({ assigneeId, assigneeName, members, onAssign, disabled }: {
   assigneeId: string | null;
   assigneeName: string | null;
@@ -605,17 +650,19 @@ function AssigneePicker({ assigneeId, assigneeName, members, onAssign, disabled 
   const [open, setOpen] = useState(false);
   const current = (
     <span className="flex min-w-0 items-center gap-2">
-      {assigneeName ? <Initials name={assigneeName} /> : <User className="h-4 w-4 text-gray-400" />}
-      <span className={cn('truncate', !assigneeName && 'text-gray-500')}>{assigneeName ?? 'Unassigned'}</span>
+      {assigneeName
+        ? <Initials name={assigneeName} />
+        : <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-dashed border-gray-300"><User className="h-3 w-3 text-gray-400" /></span>}
+      <span className={cn('truncate text-sm', assigneeName ? 'text-gray-900' : 'text-gray-500')}>{assigneeName ?? 'Unassigned'}</span>
     </span>
   );
-  if (!members) return <div className="rounded-md bg-white px-3 py-2 ring-1 ring-gray-200">{current}</div>;
+  if (!members) return <div className="flex items-center py-0.5">{current}</div>;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button type="button" disabled={disabled} className="flex w-full items-center rounded-md bg-white px-3 py-2 text-left ring-1 ring-gray-200 hover:ring-gray-300 disabled:opacity-60">
+        <button type="button" disabled={disabled} className="group -mx-2 flex w-[calc(100%+1rem)] items-center rounded-md px-2 py-1 text-left hover:bg-gray-100 disabled:opacity-60 disabled:hover:bg-transparent">
           {current}
-          <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-gray-400" />
+          <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-gray-300 group-hover:text-gray-500" />
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] min-w-[240px] p-0">
@@ -675,18 +722,181 @@ const STATUS_CHIP: Record<string, string> = {
   dismissed: 'bg-gray-50 text-gray-500', stalled: 'border-rose-200 bg-rose-50 text-rose-800', escalated: 'border-rose-200 bg-rose-50 text-rose-800', retired: 'bg-gray-50 text-gray-500',
 };
 const WORK_STATUS_LABEL: Record<WorkStatus, string> = { open: 'Suggested', in_progress: 'In progress', done: 'Done', dismissed: 'Dismissed' };
+const STATUS_PILL: Record<WorkStatus, string> = {
+  open: 'border-gray-200 bg-gray-100 text-gray-700',
+  in_progress: 'border-amber-200 bg-amber-50 text-amber-800',
+  done: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  dismissed: 'border-gray-200 bg-gray-50 text-gray-500',
+};
 
-function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canAssignSelf, members, onStatus, onAssign, onAssignSelf, onSeeInSources, amplifyUrl, onAccept, onDone, onDismiss, onRestore, busy, locked }: {
+// The status as a coloured pill; a select in the same pill when the viewer
+// may change it.
+function StatusPill({ status, editable, onChange, disabled }: { status: WorkStatus; editable: boolean; onChange: (s: WorkStatus) => void; disabled: boolean }) {
+  const pill = cn('inline-flex h-auto w-auto items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium', STATUS_PILL[status]);
+  if (!editable) return <span className={pill}>{WORK_STATUS_LABEL[status]}</span>;
+  return (
+    <Select value={status} onValueChange={(v) => onChange(v as WorkStatus)} disabled={disabled}>
+      <SelectTrigger className={cn(pill, 'focus:ring-0 focus:ring-offset-0 [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:opacity-60')}><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="open">Suggested</SelectItem>
+        <SelectItem value="in_progress">In progress</SelectItem>
+        <SelectItem value="done">Done</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+// One line of the activity feed: a comment, a change event, a PerceptionX
+// check-in or the day the action was added.
+interface FeedItem { id: string; at: string; icon: JSX.Element; text: React.ReactNode; detail?: React.ReactNode; comment?: { name: string; body: string } }
+
+function feedIcon(Icon: LucideIcon, className: string) {
+  return <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-full', className)}><Icon className="h-3.5 w-3.5" /></span>;
+}
+
+const Who = ({ children }: { children: React.ReactNode }) => <span className="font-medium text-gray-900">{children}</span>;
+
+function buildFeed(action: CompanyAction, activity: ActionActivity[], checks: ActionCheck[], nameOf: (id: string | null) => string | null, meId: string | null): FeedItem[] {
+  const items: FeedItem[] = [];
+  const who = (id: string | null | undefined) => nameOf(id ?? null) ?? 'Someone';
+  const target = (actor: string | null, to: string | null) => (to && to === actor ? (actor === meId ? 'yourself' : 'themselves') : who(to));
+
+  const added = action.published_at ?? action.created_at;
+  if (added) {
+    items.push({
+      id: 'added', at: added, icon: feedIcon(Lightbulb, 'bg-[#13274F]/10 text-[#13274F]'),
+      text: <><Who>PerceptionX</Who> added this{cycleLabel(action.cycle_raised) ? ` in ${cycleLabel(action.cycle_raised)}` : ''}</>,
+    });
+  }
+
+  for (const r of activity) {
+    const d = (r.data || {}) as Record<string, string | null | undefined>;
+    const name = who(r.actor_id);
+    if (r.kind === 'comment') {
+      items.push({ id: r.id, at: r.created_at, icon: <Initials name={name} size="md" />, text: <><Who>{name}</Who> commented</>, comment: { name, body: r.body ?? '' } });
+    } else if (r.kind === 'assigned') {
+      items.push({
+        id: r.id, at: r.created_at, icon: feedIcon(UserPlus, 'bg-violet-100 text-violet-700'),
+        text: d.to ? <><Who>{name}</Who> assigned this to <Who>{target(r.actor_id, d.to)}</Who></> : <><Who>{name}</Who> unassigned <Who>{who(d.from)}</Who></>,
+      });
+    } else if (r.kind === 'status') {
+      const done = d.to === 'done';
+      items.push({
+        id: r.id, at: r.created_at,
+        icon: done ? feedIcon(CheckCircle2, 'bg-emerald-100 text-emerald-700') : feedIcon(ArrowRightLeft, 'bg-sky-100 text-sky-700'),
+        text: done
+          ? <><Who>{name}</Who> marked this done</>
+          : <><Who>{name}</Who> moved this from <Who>{WORK_STATUS_LABEL[d.from as WorkStatus] ?? d.from}</Who> to <Who>{WORK_STATUS_LABEL[d.to as WorkStatus] ?? d.to}</Who></>,
+        detail: (d.note || d.url) ? (
+          <p className="text-sm text-gray-600">
+            {d.note}{d.note && d.url ? ' ' : ''}
+            {d.url && <a href={d.url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">View the change</a>}
+          </p>
+        ) : undefined,
+      });
+    } else if (r.kind === 'dismissed') {
+      items.push({
+        id: r.id, at: r.created_at, icon: feedIcon(XCircle, 'bg-gray-100 text-gray-500'),
+        text: <><Who>{name}</Who> dismissed this: {dismissReasonLabel(d.reason)?.toLowerCase() ?? 'no reason given'}</>,
+        detail: d.note ? <p className="text-sm text-gray-600">{d.note}</p> : undefined,
+      });
+    } else if (r.kind === 'restored') {
+      items.push({ id: r.id, at: r.created_at, icon: feedIcon(RotateCcw, 'bg-sky-100 text-sky-700'), text: <><Who>{name}</Who> restored this to <Who>Suggested</Who></> });
+    }
+  }
+
+  // Changes made before the activity log existed are read off the action.
+  const hasEvent = (kind: string, to?: string) => activity.some((r) => r.kind === kind && (!to || (r.data as Record<string, unknown>)?.to === to));
+  if (action.asserted_done_at && !hasEvent('status', 'done')) {
+    items.push({
+      id: 'legacy-done', at: action.asserted_done_at, icon: feedIcon(CheckCircle2, 'bg-emerald-100 text-emerald-700'),
+      text: <><Who>{who(action.assignee_id)}</Who> marked this done</>,
+      detail: (action.assertion_note || action.assertion_url) ? (
+        <p className="text-sm text-gray-600">
+          {action.assertion_note}{action.assertion_note && action.assertion_url ? ' ' : ''}
+          {action.assertion_url && <a href={action.assertion_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">View the change</a>}
+        </p>
+      ) : undefined,
+    });
+  }
+  if (action.work_status === 'dismissed' && action.dismissed_at && !hasEvent('dismissed')) {
+    items.push({
+      id: 'legacy-dismissed', at: action.dismissed_at, icon: feedIcon(XCircle, 'bg-gray-100 text-gray-500'),
+      text: <><Who>{who(action.dismissed_by)}</Who> dismissed this: {dismissReasonLabel(action.dismiss_reason)?.toLowerCase() ?? 'no reason given'}</>,
+      detail: action.dismiss_note ? <p className="text-sm text-gray-600">{action.dismiss_note}</p> : undefined,
+    });
+  }
+
+  for (const c of checks) {
+    const views = (c.metric_readings || []).map(readingView).filter((r): r is ReadingView => !!r);
+    items.push({
+      id: c.id, at: c.checked_on, icon: <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#13274F]/10"><img src="/logos/perceptionx-small.png" alt="" className="h-3 w-auto" /></span>,
+      text: <><Who>PerceptionX</Who> checked this in {cycleLabel(c.cycle)}: <Chip className={cn('ml-0.5 capitalize', STATUS_CHIP[c.status])}>{STATUS_LABEL[c.status] ?? c.status}</Chip></>,
+      detail: (views.length > 0 || c.note) ? (
+        <div className="space-y-1.5">
+          {views.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {views.map((r, i) => (
+                <Chip key={i}>
+                  {r.label}{r.market ? ` · ${r.market}` : ''}: <span className="ml-1 font-medium">{r.value}%</span>
+                  {r.provisional && <span className="ml-1 text-amber-600">provisional</span>}
+                </Chip>
+              ))}
+            </div>
+          )}
+          {c.note && <p className="text-sm text-gray-600">{c.note}</p>}
+        </div>
+      ) : undefined,
+    });
+  }
+
+  return items.sort((a, b) => a.at.localeCompare(b.at));
+}
+
+function CommentBox({ onSubmit, busy, locked }: { onSubmit: (body: string) => Promise<unknown>; busy: boolean; locked: string | null }) {
+  const [body, setBody] = useState('');
+  const trimmed = body.trim();
+  const canSend = trimmed.length > 0 && trimmed.length <= COMMENT_MAX && !busy && !locked;
+  const send = async () => {
+    if (!canSend) return;
+    await onSubmit(trimmed);
+    setBody('');
+  };
+  return (
+    <div className="space-y-2">
+      <Textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); void send(); } }}
+        placeholder={locked ? locked : 'Leave a comment...'}
+        disabled={!!locked || busy}
+        rows={3}
+        maxLength={COMMENT_MAX}
+        className="resize-none rounded-xl border-gray-200 bg-white px-4 py-3 text-sm placeholder:text-gray-400 focus-visible:ring-1 focus-visible:ring-blue-500"
+      />
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-gray-400">{body.length.toLocaleString()} / {COMMENT_MAX.toLocaleString()}</span>
+        <Button size="sm" className="h-8 bg-blue-600 px-4 text-white hover:bg-blue-700 disabled:bg-blue-300 disabled:opacity-100" onClick={() => void send()} disabled={!canSend}>Comment</Button>
+      </div>
+    </div>
+  );
+}
+
+function ActionDetail({ action, checks, activity, assigneeName, canChange, canAccept, canAssignSelf, members, nameOf, meId, onStatus, onAssign, onAssignSelf, onComment, onSeeInSources, amplifyUrl, onAccept, onDone, onDismiss, onRestore, busy, commentBusy, locked }: {
   action: CompanyAction;
   checks: ActionCheck[];
+  activity: ActionActivity[];
   assigneeName: string | null;
   canChange: boolean;
   canAccept: boolean;
   canAssignSelf: boolean;
   members: Person[] | null;
+  nameOf: (id: string | null) => string | null;
+  meId: string | null;
   onStatus: (s: WorkStatus) => void;
   onAssign: (id: string | null) => void;
   onAssignSelf: () => void;
+  onComment: (body: string) => Promise<unknown>;
   onSeeInSources: ((domain: string) => void) | null;
   amplifyUrl: string | null;
   onAccept: (() => void) | null;
@@ -694,11 +904,12 @@ function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canA
   onDismiss: (() => void) | null;
   onRestore: (() => void) | null;
   busy: boolean;
+  commentBusy: boolean;
   locked: string | null;
 }) {
   // In preview every control shows but none can act.
   const off = busy || !!locked;
-  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const isWatchItem = action.register === 'watch';
   const isDismissedItem = action.work_status === 'dismissed';
   const notes = noteParts(action.notes);
@@ -711,13 +922,14 @@ function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canA
   const lifts = (action.lifts || []).filter((l) => l.metric || l.attribute);
   const latestReadings = (checks[0]?.metric_readings || []).map(readingView).filter((r): r is ReadingView => !!r);
   const hasDetails = reads.length > 0 || pages.length > 0 || lifts.length > 0 || latestReadings.length > 0 || notes.length > 0;
-  const hasWorkButtons = !!(onAccept || onDone || onDismiss || onRestore);
-  const hasLinks = links.length > 0 || !!(domain && onSeeInSources) || !!amplifyUrl;
+  const feed = buildFeed(action, activity, checks, nameOf, meId);
+  const [primaryLink, ...moreLinks] = links;
+  const canEditStatus = !isDismissedItem && (canChange || (canAccept && action.work_status === 'open'));
 
   return (
     <div className="grid h-full min-h-0 grid-cols-1 overflow-y-auto md:grid-cols-[1fr_300px] md:overflow-hidden">
-      {/* Main column */}
-      <div className="space-y-5 p-6 md:min-h-0 md:overflow-y-auto">
+      {/* Main column: the recommendation, details, then the conversation. */}
+      <div className="space-y-6 p-6 md:min-h-0 md:overflow-y-auto md:p-8">
         <DialogHeader className="space-y-1 text-left">
           <DialogTitle className="pr-8 text-xl font-medium leading-snug">{displayTitle(action)}</DialogTitle>
           <DialogDescription className="sr-only">Action details</DialogDescription>
@@ -738,9 +950,9 @@ function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canA
 
         {hasDetails && (
           <section className="rounded-xl border border-gray-200">
-            <button type="button" onClick={() => setDetailsOpen((v) => !v)} className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-gray-900">
+            <button type="button" onClick={() => setDetailsOpen((v) => !v)} className="flex w-full items-center gap-2.5 px-4 py-3.5 text-sm font-medium text-gray-900">
               <ListChecks className="h-4 w-4 text-gray-400" />Details
-              <ChevronDown className={cn('ml-auto h-4 w-4 text-gray-400 transition-transform', !detailsOpen && '-rotate-90')} />
+              <ChevronRight className={cn('ml-auto h-4 w-4 text-gray-400 transition-transform', detailsOpen && 'rotate-90')} />
             </button>
             {detailsOpen && (
               <div className="space-y-5 border-t border-gray-100 px-4 pb-5 pt-4">
@@ -825,62 +1037,32 @@ function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canA
           </section>
         )}
 
-        {(checks.length > 0 || action.asserted_done_at || isDismissedItem) && (
-          <section className="space-y-3">
-            <h3 className="text-sm font-medium text-gray-700">Progress</h3>
-            <ol className="space-y-3">
-              {isDismissedItem && (
-                <li className="flex gap-3">
-                  <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" />
-                  <div className="text-sm text-gray-800">
-                    Dismissed{dateInWords(action.dismissed_at) ? ` on ${dateInWords(action.dismissed_at)}` : ''}: {dismissReasonLabel(action.dismiss_reason) ?? 'no reason given'}.
-                    {action.dismiss_note && <span className="text-gray-600"> {action.dismiss_note}</span>}
+        <section className="space-y-1 border-t border-gray-200 pt-5">
+          <h3 className="text-sm font-medium text-gray-900">Activity</h3>
+          <ol className="divide-y divide-gray-100">
+            {feed.map((item) => (
+              <li key={item.id} className="flex gap-3 py-3.5">
+                {item.icon}
+                <div className="min-w-0 flex-1 space-y-1.5 pt-1">
+                  <div className="text-sm text-gray-600">
+                    {item.text}
+                    <span className="ml-2 whitespace-nowrap text-xs text-gray-400">{timeAgo(item.at)}</span>
                   </div>
-                </li>
-              )}
-              {action.asserted_done_at && (
-                <li className="flex gap-3">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                  <div className="text-sm text-gray-800">
-                    Marked done{dateInWords(action.asserted_done_at) ? ` on ${dateInWords(action.asserted_done_at)}` : ''}.
-                    {action.assertion_note && <span className="text-gray-600"> {action.assertion_note}</span>}
-                    {action.assertion_url && <> <a href={action.assertion_url} target="_blank" rel="noreferrer" className="underline">View the change</a></>}
-                  </div>
-                </li>
-              )}
-              {checks.map((c) => (
-                <li key={c.id} className="flex gap-3">
-                  <CircleDot className="mt-0.5 h-4 w-4 shrink-0 text-gray-300" />
-                  <div className="min-w-0 space-y-1.5">
-                    <div className="flex flex-wrap items-center gap-1.5 text-sm">
-                      <span className="font-medium text-gray-900">{cycleLabel(c.cycle)}</span>
-                      <Chip className={cn('capitalize', STATUS_CHIP[c.status])}>{STATUS_LABEL[c.status] ?? c.status}</Chip>
-                    </div>
-                    {(() => {
-                      const views = (c.metric_readings || []).map(readingView).filter((r): r is ReadingView => !!r);
-                      return views.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {views.map((r, i) => (
-                            <Chip key={i}>
-                              {r.label}{r.market ? ` · ${r.market}` : ''}: <span className="ml-1 font-medium">{r.value}%</span>
-                              {r.provisional && <span className="ml-1 text-amber-600">provisional</span>}
-                            </Chip>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                    {c.note && <p className="text-sm text-gray-600">{c.note}</p>}
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </section>
-        )}
+                  {item.comment && <p className="whitespace-pre-line text-sm leading-relaxed text-gray-800">{item.comment.body}</p>}
+                  {item.detail}
+                </div>
+              </li>
+            ))}
+          </ol>
+          <div className="pt-3">
+            <CommentBox onSubmit={onComment} busy={commentBusy} locked={locked} />
+          </div>
+        </section>
       </div>
 
-      {/* Side column: fields scroll, buttons stay pinned at the bottom. */}
-      <aside className="flex min-h-0 flex-col border-t border-gray-200 bg-gray-50/70 md:border-l md:border-t-0">
-        <div className="flex-1 space-y-5 p-6 md:min-h-0 md:overflow-y-auto">
+      {/* Side column: plain fields, then the buttons. */}
+      <aside className="min-h-0 border-t border-gray-200 bg-white md:overflow-y-auto md:border-l md:border-t-0">
+        <div className="space-y-6 p-6">
           {!isWatchItem && (
             <Field label="Assignee">
               <AssigneePicker
@@ -891,94 +1073,94 @@ function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canA
                 disabled={off}
               />
               {canAssignSelf && !members && !isDismissedItem && (
-                <div className="mt-1 text-right">
-                  <button type="button" onClick={onAssignSelf} disabled={off} className="text-sm text-blue-600 hover:underline">Assign to me</button>
-                </div>
+                <button type="button" onClick={onAssignSelf} disabled={off} className="mt-1 text-xs text-blue-600 hover:underline">Assign to me</button>
               )}
             </Field>
           )}
 
-          {action.work_kind && <Field label="Type"><KindLabel action={action} /></Field>}
+          {action.work_kind && <Field label="Type"><KindLabel action={action} className="text-sm" /></Field>}
 
           {!isWatchItem && (
             <Field label="Status">
-              {!isDismissedItem && (canChange || (canAccept && action.work_status === 'open')) ? (
-                <Select value={action.work_status} onValueChange={(v) => onStatus(v as WorkStatus)} disabled={off}>
-                  <SelectTrigger className="h-9 bg-white"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="open">Suggested</SelectItem>
-                    <SelectItem value="in_progress">In progress</SelectItem>
-                    <SelectItem value="done">Done</SelectItem>
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Chip className={STATUS_CHIP[action.work_status]}>{WORK_STATUS_LABEL[action.work_status]}</Chip>
-              )}
+              <StatusPill status={action.work_status} editable={canEditStatus} onChange={onStatus} disabled={off} />
               {isDismissedItem && action.dismiss_reason && (
-                <div className="mt-1 text-xs text-gray-500">{dismissReasonLabel(action.dismiss_reason)}</div>
+                <div className="mt-1.5 text-xs text-gray-500">{dismissReasonLabel(action.dismiss_reason)}</div>
               )}
             </Field>
           )}
 
           <Field label="Scope">
-            <ScopeChip action={action} />
+            <ScopeChip action={action} className="text-sm text-gray-900" />
             {actionScope(action).kind === 'global' && markets.length > 1 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">{markets.map((m) => <Chip key={m}>{m}</Chip>)}</div>
+              <div className="mt-1 text-xs text-gray-500">{markets.join(', ')}</div>
             )}
           </Field>
 
           {(action.lanes || []).length > 0 && (
-            <Field label="Lanes">
-              <div className="flex flex-wrap gap-1.5">{(action.lanes || []).map((l) => <Chip key={l}>{LANE_LABEL[l] ?? l}</Chip>)}</div>
-            </Field>
+            <Field label="Lanes">{(action.lanes || []).map((l) => LANE_LABEL[l] ?? l).join(', ')}</Field>
           )}
 
           {cycleLabel(action.cycle_raised) && <Field label="Added">{cycleLabel(action.cycle_raised)}</Field>}
-        </div>
 
-        {(hasWorkButtons || hasLinks) && (
-          <div className="sticky bottom-0 space-y-2 border-t border-gray-200 bg-white p-4">
-            {locked && <p className="text-center text-xs text-gray-500">{locked}</p>}
-            {onAccept && (
-              <div className="flex gap-2">
-                {onDismiss && <Button variant="outline" className="h-9 flex-1" onClick={onDismiss} disabled={off}>Dismiss</Button>}
-                <Button className="h-9 flex-1 bg-[#13274F] text-white hover:bg-[#13274F]/90" onClick={onAccept} disabled={off}><Check className="mr-1.5 h-4 w-4" />Accept</Button>
-              </div>
-            )}
-            {onDone && (
-              <div className="flex gap-2">
-                {onDismiss && <Button variant="outline" className="h-9 flex-1" onClick={onDismiss} disabled={off}>Dismiss</Button>}
-                <Button className="h-9 flex-1" onClick={onDone} disabled={off}><CheckCircle2 className="mr-1.5 h-4 w-4" />Mark done</Button>
-              </div>
-            )}
-            {!onAccept && !onDone && onDismiss && (
-              <Button variant="outline" className="h-9 w-full" onClick={onDismiss} disabled={off}>Dismiss</Button>
-            )}
-            {onRestore && <Button variant="outline" className="h-9 w-full" onClick={onRestore} disabled={off}>Restore to suggested</Button>}
-            {amplifyUrl && (
-              <Button asChild variant="outline" className="h-9 w-full justify-between border-[#DB5E89]/40 bg-white text-[#13274F] hover:bg-[#DB5E89]/5">
-                <a href={amplifyUrl} target="_blank" rel="noreferrer">
-                  <span className="flex items-center gap-2 truncate"><Megaphone className="h-3.5 w-3.5 shrink-0 text-[#DB5E89]" />Share with employees</span>
-                  <ExternalLink className="ml-2 h-3.5 w-3.5 shrink-0" />
-                </a>
-              </Button>
-            )}
-            {links.slice(0, 2).map((l, i) => (
-              <Button key={l.url} asChild variant="outline" className="h-9 w-full justify-between bg-white">
-                <a href={l.url} target="_blank" rel="noreferrer">
-                  <span className="truncate">{i === 0 ? linkVerb : l.label}</span>
-                  <ExternalLink className="ml-2 h-3.5 w-3.5 shrink-0" />
-                </a>
-              </Button>
-            ))}
-            {domain && onSeeInSources && (
-              <Button variant="outline" className="h-9 w-full justify-between bg-white" onClick={() => onSeeInSources(domain)}>
-                <span className="truncate">See {domain} in Sources</span>
-                <ArrowRight className="ml-2 h-3.5 w-3.5 shrink-0" />
-              </Button>
-            )}
-          </div>
-        )}
+          {(onAccept || onDone || onRestore || onDismiss || primaryLink || amplifyUrl || (domain && onSeeInSources)) && (
+            <div className="space-y-2 border-t border-gray-100 pt-5">
+              <div className="text-[11px] font-medium uppercase tracking-wider text-gray-500">Actions</div>
+              {locked && (
+                <p className="flex items-center gap-1.5 pb-1 text-xs text-gray-500"><Lock className="h-3 w-3 shrink-0" />{locked}</p>
+              )}
+              {onAccept && (
+                <Button className="h-10 w-full bg-[#13274F] text-white hover:bg-[#13274F]/90" onClick={onAccept} disabled={off}>
+                  <Check className="mr-1.5 h-4 w-4" />Accept
+                </Button>
+              )}
+              {onDone && (
+                <Button className="h-10 w-full bg-emerald-600 text-white hover:bg-emerald-700" onClick={onDone} disabled={off}>
+                  <CheckCircle2 className="mr-1.5 h-4 w-4" />Mark done
+                </Button>
+              )}
+              {onRestore && (
+                <Button variant="outline" className="h-10 w-full" onClick={onRestore} disabled={off}>
+                  <RotateCcw className="mr-1.5 h-4 w-4" />Restore to suggested
+                </Button>
+              )}
+              {primaryLink && (
+                <Button asChild className="h-10 w-full bg-blue-600 text-white hover:bg-blue-700">
+                  <a href={primaryLink.url} target="_blank" rel="noreferrer">
+                    <span className="truncate">{linkVerb}</span><ArrowRight className="ml-1.5 h-4 w-4 shrink-0" />
+                  </a>
+                </Button>
+              )}
+              {amplifyUrl && (
+                <Button asChild className="h-10 w-full bg-[#DB5E89]/10 text-[#13274F] hover:bg-[#DB5E89]/20">
+                  <a href={amplifyUrl} target="_blank" rel="noreferrer">
+                    <Megaphone className="mr-1.5 h-4 w-4 shrink-0 text-[#DB5E89]" /><span className="truncate">Share with employees</span>
+                  </a>
+                </Button>
+              )}
+              {(moreLinks.length > 0 || (domain && onSeeInSources)) && (
+                <ul className="pt-1">
+                  {moreLinks.slice(0, 2).map((l) => (
+                    <li key={l.url}>
+                      <a href={l.url} target="_blank" rel="noreferrer" className="flex items-center justify-between py-1.5 text-sm text-gray-600 hover:text-gray-900">
+                        <span className="truncate">{l.label}</span><ArrowUpRight className="ml-2 h-3.5 w-3.5 shrink-0 text-gray-400" />
+                      </a>
+                    </li>
+                  ))}
+                  {domain && onSeeInSources && (
+                    <li>
+                      <button type="button" onClick={() => onSeeInSources(domain)} className="flex w-full items-center justify-between py-1.5 text-left text-sm text-gray-600 hover:text-gray-900">
+                        <span className="truncate">See {domain} in Sources</span><ArrowRight className="ml-2 h-3.5 w-3.5 shrink-0 text-gray-400" />
+                      </button>
+                    </li>
+                  )}
+                </ul>
+              )}
+              {onDismiss && (
+                <button type="button" onClick={onDismiss} disabled={off} className="w-full pt-2 text-center text-sm text-gray-400 hover:text-gray-700 disabled:opacity-60">Dismiss this action</button>
+              )}
+            </div>
+          )}
+        </div>
       </aside>
     </div>
   );
