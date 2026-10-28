@@ -15,7 +15,7 @@ Do this in the same conversation as "Agree copy in chat", once the actions pass 
 | Table | One row per | What it holds |
 |---|---|---|
 | `client_report_snapshots` | organisation, cycle, report type | scope (markets, functions, exclusions, assistants, aliases, collection window), headline (overall_score, sentiment_pct, visibility_pct, relevance), metric_status per metric (final or provisional, with reason), breakdowns (visibility_by_market with peers, attribute_sentiment, sources by market), as_of, source_report_name, signed_off_by, signed_off_on |
-| `company_actions` | numbered action or watch item | key, register, title, cycle_raised, action_number, problem (the report's Why), ai_says, ai_reads, urls, recommendation (What to do), lanes, timing, lifts, verified_facts, owner_name, tracking_status, markets, functions, source_name, source_domain, notes |
+| `company_actions` | numbered action or watch item | key, register, title, cycle_raised, action_number, problem (the report's Why), ai_says, ai_reads, urls, recommendation (What to do), lanes, timing, priority, priority_reason, lifts, verified_facts, owner_name, tracking_status, markets, functions, source_name, source_domain, notes |
 | `company_action_checks` | action, cycle | the readings at that cycle (metric, attribute, market, value_pct, metric_status), verified_facts, status, note |
 
 ## Field rules
@@ -23,7 +23,8 @@ Do this in the same conversation as "Agree copy in chat", once the actions pass 
 - `cycle` and `cycle_raised` are the collection cycle as `YYYY-MM-01`, for example `2026-09-01` for Q3 2026. `period_label` is `Q3 2026`.
 - `key` is `<cycle>:<two-digit number>` for actions (`2026-09-01:05`) and `<cycle>:watch-<slug>` for watch items. Keys make the file re-runnable: ON CONFLICT updates the same rows.
 - `register` is `act_now` for a numbered action, `watch` for a watch item. `editorial_status` is `new`. `work_kind` is `owned_content`.
-- `timing` is `act_now`, `act_next` or `act_later`. `lanes` is any of `business`, `owned`, `people`.
+- `timing` is `act_now`, `act_next` or `act_later`. It is kept for the register only: no client surface (dashboard, Ask PerceptionX, the quarterly email) shows act now / next / later wording. `lanes` is any of `business`, `owned`, `people`.
+- `priority` is `high`, `medium` or `low`, with `priority_reason` one sentence in the client's own figures. It is the expected effect on what AI tells candidates (share of negative opinions targeted x how much the client controls x how fast AI picks it up), not timing: the client decides when to act. Retired and done rows carry null.
 - `lifts` is a JSON list of `{"metric", "attribute", "market"}`. `ai_reads` is a JSON list of `{"source", "market", "coverage_pct", "url"}` where coverage_pct is the share of the relevant answers citing the source. `verified_facts` is a JSON list of `{"fact", "checked_on"}` from the verification log.
 - `markets` and `functions` use the tracked spellings in `confirmed_prompts.location_context` and `job_function_context`, exactly, so the email and Ask AI filters match. An organisation-wide action has `markets = '{}'`.
 - The report's "Success by", "Worth" and Amplify share link go in `notes` as plain sentences, for example `Success by Q1 2027: both profiles claimed and current. Worth: under 0.1 points overall; Romania from 75% to 77%. Amplify: ford.perceptionx.ai/brwpxu.`

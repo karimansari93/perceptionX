@@ -7,9 +7,9 @@
 //
 // Visibility: everyone in the organisation sees every action in its register
 // (RLS scopes rows to the viewer's organisation). The default "For you" view
-// shows the actions for the header's market only (it lands on the user's
-// saved location), or only the global actions when no market is selected,
-// plus anything they own; "All" shows everything.
+// matches the quarterly email: the actions for the header's market only (it
+// lands on the user's saved location), or everything when no market is
+// selected, plus anything they own; "All" shows everything.
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MapPin, XCircle, ArrowRight, ArrowRightLeft, ArrowUpRight, Award, BadgeCheck, Briefcase, Globe, Linkedin, Youtube, Check, ChevronDown, ChevronRight, Lightbulb, ListChecks, CircleDashed, CircleDot, CheckCircle2, Eye, FileText, Lock, Megaphone, MessagesSquare, RotateCcw, Send, Star, User, UserPlus, type LucideIcon } from 'lucide-react';
@@ -30,6 +30,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Favicon } from '@/components/ui/favicon';
 import { activateLinkFor } from '@/lib/activate/api';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -39,6 +40,7 @@ import { GENERAL_KEY, canonicalizeLocationContext, countryCodeFor, type Location
 import {
   BOARD_COLUMNS, LANE_LABEL, STATUS_LABEL, typeLabel, buildBoard, cycleLabel, noteParts,
   sourcesTarget, displayTitle, selectionMarkets, actionScope, isPeopleAction, pickAmplifyLink, type AmplifyLink, readingView, trendText, type ReadingView, DISMISS_REASONS, dismissReasonLabel, timeAgo, COMMENT_MAX, type ActionActivity, type ActionCheck, type CompanyAction, type WorkStatus,
+  PRIORITIES, PRIORITY_LABEL, PRIORITY_NOTE, priorityOf, type Priority,
 } from '@/lib/actions';
 
 const db = supabase as any;
@@ -75,6 +77,10 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
   const queryClient = useQueryClient();
 
   const [scope, setScope] = useState<'for_you' | 'all'>('for_you');
+  // Priority filter: 'all' or one label. Only offered once the register
+  // carries labels, so an unlabelled register shows no empty control.
+  const [priority, setPriority] = useState<Priority | 'all'>('all');
+  const hasPriorities = actions.some((a) => priorityOf(a) !== null);
   // ?action=<id> (from the Overview card) opens that action's detail.
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -210,7 +216,8 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
     forYou: scope === 'for_you',
     markets: myMarket ? myMarket.spellings : [],
     includeUserId: meId,
-  }), [actions, scope, myMarket, meId]);
+    priority: priority === 'all' ? null : priority,
+  }), [actions, scope, myMarket, meId, priority]);
 
   const checksFor = (id: string) => (checksQuery.data || [])
     .filter((c) => c.action_id === id)
@@ -344,8 +351,20 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
           <p className="text-sm text-gray-500 mt-1">
             What to do next to change how AI describes you to candidates.
           </p>
+          {hasPriorities && <p className="mt-1 text-xs text-gray-400">{PRIORITY_NOTE}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-3">
+        {hasPriorities && (
+          <Select value={priority} onValueChange={(v) => setPriority(v as Priority | 'all')}>
+            <SelectTrigger className="h-8 w-[150px] text-sm" aria-label="Priority">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All priorities</SelectItem>
+              {PRIORITIES.map((p) => <SelectItem key={p} value={p}>{PRIORITY_LABEL[p]} priority</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
         {actions.length > 0 && (
           <div className="inline-flex rounded-lg bg-gray-100 p-0.5 self-start lg:self-auto" role="group" aria-label="Which actions to show">
             {([['for_you', 'For you'], ['all', 'All']] as const).map(([key, label]) => (
@@ -373,9 +392,15 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
         </div>
       ) : (
         <>
-          {total === 0 && scope === 'for_you' && (
+          {total === 0 && priority !== 'all' && (
             <p className="text-sm text-gray-500">
-              {myMarket ? `No actions for ${myMarket.label} right now.` : 'No global actions right now.'}{' '}
+              No {PRIORITY_LABEL[priority].toLowerCase()} priority actions{scope === 'for_you' && myMarket ? ` for ${myMarket.label}` : ''} right now.{' '}
+              <button type="button" className="underline" onClick={() => setPriority('all')}>Show all priorities</button>
+            </p>
+          )}
+          {total === 0 && priority === 'all' && scope === 'for_you' && (
+            <p className="text-sm text-gray-500">
+              {myMarket ? `No actions for ${myMarket.label} right now.` : 'No actions right now.'}{' '}
               <button type="button" className="underline" onClick={() => setScope('all')}>Show all</button>
             </p>
           )}
@@ -506,6 +531,35 @@ function ScopeChip({ action, className }: { action: CompanyAction; className?: s
   );
 }
 
+// Soft tinted pills, no border: blue for High, slate for Medium, grey for
+// Low. One cool scale, so the chip reads as a label and not an alarm.
+const PRIORITY_STYLE: Record<Priority, string> = {
+  high: 'bg-blue-50 text-blue-700',
+  medium: 'bg-slate-100 text-slate-700',
+  low: 'bg-gray-100 text-gray-500',
+};
+
+// The priority label (High strong, Medium, Low) with the reason on hover.
+// Nothing for an unlabelled action.
+export function PriorityChip({ action, className }: { action: CompanyAction; className?: string }) {
+  const priority = priorityOf(action);
+  if (!priority) return null;
+  const chip = (
+    <span className={cn('inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold leading-4', PRIORITY_STYLE[priority], className)} aria-label={`${PRIORITY_LABEL[priority]} priority`}>
+      {PRIORITY_LABEL[priority]}
+    </span>
+  );
+  if (!action.priority_reason) return chip;
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>{chip}</TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs text-xs leading-relaxed">{action.priority_reason}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 const WORK_KIND_STYLE: Record<string, { icon: LucideIcon; className: string }> = {
   outreach: { icon: Send, className: 'text-sky-700' },
   owned_content: { icon: FileText, className: 'text-indigo-700' },
@@ -559,7 +613,10 @@ function ActionCard({ action, ownerLabel, onOpen, onAccept, onDone, onDismiss, b
       onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(); } }}
       className="cursor-pointer rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition-colors hover:border-gray-300 hover:shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
     >
-      <KindLabel action={action} />
+      <div className="flex items-center justify-between gap-2">
+        <KindLabel action={action} />
+        <PriorityChip action={action} />
+      </div>
       <h4 className="mt-2.5 text-[15px] font-medium leading-snug text-gray-900">
         {displayTitle(action)}
       </h4>
@@ -576,16 +633,16 @@ function ActionCard({ action, ownerLabel, onOpen, onAccept, onDone, onDismiss, b
         {showAccept && (
           <span className={cn('flex shrink-0 items-center gap-1.5', locked && 'cursor-not-allowed')} title={locked ?? undefined}>
             {onDismiss && (
-              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-gray-500" onClick={stop(onDismiss)} disabled={off}>Dismiss</Button>
+              <Button size="sm" variant="ghost" className="h-7 rounded-md px-2 text-xs text-gray-500" onClick={stop(onDismiss)} disabled={off}>Dismiss</Button>
             )}
-            <Button size="sm" className="h-7 bg-[#13274F] px-2.5 text-xs text-white hover:bg-[#13274F]/90" onClick={stop(onAccept!)} disabled={off}>
+            <Button size="sm" className="h-7 rounded-md bg-blue-600 px-2.5 text-xs text-white hover:bg-blue-700" onClick={stop(onAccept!)} disabled={off}>
               <Check className="mr-1 h-3 w-3" />Accept
             </Button>
           </span>
         )}
         {showDone && (
           <span className={cn('shrink-0', locked && 'cursor-not-allowed')} title={locked ?? undefined}>
-            <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={stop(onDone!)} disabled={off}>
+            <Button size="sm" variant="outline" className="h-7 rounded-md px-2.5 text-xs" onClick={stop(onDone!)} disabled={off}>
               <CheckCircle2 className="mr-1 h-3 w-3" />Mark done
             </Button>
           </span>
@@ -876,7 +933,7 @@ function CommentBox({ onSubmit, busy, locked }: { onSubmit: (body: string) => Pr
       />
       <div className="flex items-center justify-between">
         <span className="text-xs text-gray-400">{body.length.toLocaleString()} / {COMMENT_MAX.toLocaleString()}</span>
-        <Button size="sm" className="h-8 bg-blue-600 px-4 text-white hover:bg-blue-700 disabled:bg-blue-300 disabled:opacity-100" onClick={() => void send()} disabled={!canSend}>Comment</Button>
+        <Button size="sm" className="h-8 rounded-md bg-blue-600 px-4 text-white hover:bg-blue-700 disabled:bg-blue-300 disabled:opacity-100" onClick={() => void send()} disabled={!canSend}>Comment</Button>
       </div>
     </div>
   );
@@ -1078,6 +1135,15 @@ function ActionDetail({ action, checks, activity, assigneeName, canChange, canAc
             </Field>
           )}
 
+          {priorityOf(action) && (
+            <Field label="Priority">
+              <PriorityChip action={action} />
+              {action.priority_reason && (
+                <p className="mt-1.5 text-xs leading-relaxed text-gray-500"><span className="text-gray-400">Why this priority:</span> {action.priority_reason}</p>
+              )}
+            </Field>
+          )}
+
           {action.work_kind && <Field label="Type"><KindLabel action={action} className="text-sm" /></Field>}
 
           {!isWatchItem && (
@@ -1109,29 +1175,29 @@ function ActionDetail({ action, checks, activity, assigneeName, canChange, canAc
                 <p className="flex items-center gap-1.5 pb-1 text-xs text-gray-500"><Lock className="h-3 w-3 shrink-0" />{locked}</p>
               )}
               {onAccept && (
-                <Button className="h-10 w-full bg-[#13274F] text-white hover:bg-[#13274F]/90" onClick={onAccept} disabled={off}>
+                <Button className="h-9 w-full rounded-md bg-blue-600 text-white hover:bg-blue-700" onClick={onAccept} disabled={off}>
                   <Check className="mr-1.5 h-4 w-4" />Accept
                 </Button>
               )}
               {onDone && (
-                <Button className="h-10 w-full bg-emerald-600 text-white hover:bg-emerald-700" onClick={onDone} disabled={off}>
+                <Button className="h-9 w-full rounded-md bg-emerald-600 text-white hover:bg-emerald-700" onClick={onDone} disabled={off}>
                   <CheckCircle2 className="mr-1.5 h-4 w-4" />Mark done
                 </Button>
               )}
               {onRestore && (
-                <Button variant="outline" className="h-10 w-full" onClick={onRestore} disabled={off}>
+                <Button variant="outline" className="h-9 w-full rounded-md" onClick={onRestore} disabled={off}>
                   <RotateCcw className="mr-1.5 h-4 w-4" />Restore to suggested
                 </Button>
               )}
               {primaryLink && (
-                <Button asChild className="h-10 w-full bg-blue-600 text-white hover:bg-blue-700">
+                <Button asChild className="h-9 w-full rounded-md bg-blue-600 text-white hover:bg-blue-700">
                   <a href={primaryLink.url} target="_blank" rel="noreferrer">
                     <span className="truncate">{linkVerb}</span><ArrowRight className="ml-1.5 h-4 w-4 shrink-0" />
                   </a>
                 </Button>
               )}
               {amplifyUrl && (
-                <Button asChild className="h-10 w-full bg-[#DB5E89]/10 text-[#13274F] hover:bg-[#DB5E89]/20">
+                <Button asChild className="h-9 w-full rounded-md bg-[#DB5E89]/10 text-[#13274F] hover:bg-[#DB5E89]/20">
                   <a href={amplifyUrl} target="_blank" rel="noreferrer">
                     <Megaphone className="mr-1.5 h-4 w-4 shrink-0 text-[#DB5E89]" /><span className="truncate">Share with employees</span>
                   </a>

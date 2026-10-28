@@ -77,13 +77,19 @@ function attributeLabel(row: DigestAttributeRow, appUrl: string): string {
     `<img alt="" width="14" height="14" src="${appUrl}/email/attributes/${row.attributeId}.png" style="display:inline-block;vertical-align:middle;border:0;"></span>${escapeHtml(row.name)}`;
 }
 
-function metricCard(label: string, value: string, sub: string, grade?: string): string {
-  const g = grade
-    ? ` <span style="${F}font-size:11px;font-weight:700;color:#fff;background:${PINK};padding:2px 7px;border-radius:999px;vertical-align:middle;position:relative;top:-3px;">${grade}</span>`
-    : '';
-  return `<div class="em-metric-card" style="background-color:#FFFFFF;border-radius:10px;border:1px solid ${LINE};box-sizing:border-box;height:118px;padding:14px 16px;">` +
+// Band badge on a metric card: the colour says the level before the word does.
+const BAND_COLORS: Record<string, [string, string]> = {
+  'Excellent': [UPBG, UPFG], 'Strong': ['#E6FAF9', '#0E8F8C'], 'Fair': ['#FFF7E6', '#B45309'], 'Needs improvement': [DNBG, DNFG],
+};
+function bandBadge(grade: string | null | undefined): string {
+  if (!grade) return '';
+  const [bg, fg] = BAND_COLORS[grade] ?? [FLBG, FLFG];
+  return `<span style="${F}font-size:11px;font-weight:700;color:${fg};background-color:${bg};padding:3px 8px;border-radius:999px;display:inline-block;margin-top:6px;">${escapeHtml(grade)}</span>`;
+}
+function metricCard(label: string, value: string, sub: string, grade?: string | null): string {
+  return `<div class="em-metric-card" style="background-color:#FFFFFF;border-radius:10px;border:1px solid ${LINE};box-sizing:border-box;height:142px;padding:14px 16px;">` +
     p(label, 11, MUTED, 600, 'text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;', '24px') +
-    p(value + g, 26, INK, 700, 'letter-spacing:-0.5px;margin-bottom:8px;', '1.1') + sub + '</div>';
+    p(value, 26, INK, 700, 'letter-spacing:-0.5px;margin-bottom:6px;', '1.1') + sub + bandBadge(grade) + '</div>';
 }
 
 const metricRow = (a: string, b: string) =>
@@ -122,17 +128,31 @@ function barRow(row: DigestBarRow, token: string): string {
 const barList = (rows: string[]) =>
   `<table style="width:100%;border-collapse:separate;border-spacing:0 5px;">${rows.join('')}</table>`;
 
+// The priority chip, the dashboard's soft tinted pill: blue for High, slate
+// for Medium, grey for Low, no border. The reason sits in the title so it
+// shows on hover where the client supports it.
+const PRIORITY_CHIP: Record<'high' | 'medium' | 'low', string> = {
+  high: 'color:#1D4ED8;background-color:#EFF6FF;',
+  medium: 'color:#334155;background-color:#F1F5F9;',
+  low: 'color:#6B7280;background-color:#F3F4F6;',
+};
+
+function priorityChip(a: DigestActionRow): string {
+  if (!a.priority) return '';
+  const title = a.priorityReason ? ` title="${escapeHtml(a.priorityReason)}"` : '';
+  const label = a.priority.charAt(0).toUpperCase() + a.priority.slice(1);
+  return ` <span${title} style="${F}font-size:11px;font-weight:600;${PRIORITY_CHIP[a.priority]}border-radius:999px;padding:1px 8px;margin-left:8px;vertical-align:2px;">${label}</span>`;
+}
+
 function actionCard(a: DigestActionRow): string {
-  const timing = a.timing
-    ? ` <span style="${F}font-size:10px;font-weight:700;color:${NAVY};border:1px solid ${NAVY};border-radius:999px;padding:1px 7px;margin-left:8px;vertical-align:2px;letter-spacing:0.3px;">${escapeHtml(a.timing.toUpperCase())}</span>`
-    : '';
+  const timing = priorityChip(a);
   const field = (label: string, text: string) =>
     `<tr><td style="${F}font-size:11px;font-weight:600;color:${MUTED};text-transform:uppercase;letter-spacing:0.5px;padding:6px 12px 0 0;vertical-align:top;white-space:nowrap;">${label}</td>` +
     `<td style="${F}font-size:13px;line-height:1.5;color:${BODY};padding:6px 0 0 0;vertical-align:top;width:100%;">${text}</td></tr>`;
   const meta = [a.markets.length ? a.markets.map(escapeHtml).join(', ') : '', a.owner ? `Owner: ${escapeHtml(a.owner)}` : '', a.lifts.length ? `Lifts ${a.lifts.map(escapeHtml).join('; ')}` : '']
     .filter(Boolean).join(' · ');
   return `<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 10px;"><tr><td style="border:1px solid ${LINE};border-radius:10px;padding:12px 14px;">` +
-    p(`<span style="color:${PINK};font-weight:700;margin-right:8px;">${escapeHtml(a.number)}</span>${escapeHtml(a.title)}${timing}`, 14, INK, 700, 'margin-bottom:2px;', '20px') +
+    p(`${a.number ? `<span style="color:${PINK};font-weight:700;margin-right:8px;">${escapeHtml(a.number)}</span>` : ''}${escapeHtml(a.title)}${timing}`, 14, INK, 700, 'margin-bottom:2px;', '20px') +
     (meta ? p(meta, 12, MUTED, 400, '', '18px') : '') +
     '<table cellpadding="0" cellspacing="0" role="presentation" style="width:100%;border-collapse:collapse;">' +
     (a.why ? field('Why', prose(a.why)) : '') + field('What to do', prose(a.whatToDo)) + '</table></td></tr></table>';
@@ -198,15 +218,15 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     .concat(payload.scope.markets.length > 1 ? [payload.scope.markets.join(', ')] : [])
     .concat(payload.scope.jobFunctions.length ? [payload.scope.jobFunctions.length > 3 ? `${payload.scope.jobFunctions.length} job functions` : payload.scope.jobFunctions.join(', ')] : [])
     .map(escapeHtml).join(DOT);
-  const metric = (label: string, x: DigestMetric, suffix: string, hidden: string | null, grade?: string) =>
-    metricCard(label, x.value === null ? '–' : `${x.value}${suffix}`, pill(x.delta, prev, hidden), grade);
+  const metric = (label: string, x: DigestMetric & { grade?: string | null }, suffix: string, hidden: string | null) =>
+    metricCard(label, x.value === null ? '–' : `${x.value}${suffix}`, pill(x.delta, prev, hidden), x.grade);
   const scopeCard = `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="em-project-card" style="margin:16px 0;background-color:#F8FAFC;border-radius:12px;border:1px solid ${LINE};"><tbody><tr><td style="padding:20px;">` +
     `<table style="width:100%;border-collapse:collapse;border-spacing:0;"><tr>` +
     `<td style="width:28px;vertical-align:middle;padding-right:12px;">${mark(brandDomain, token, 28)}</td>` +
     `<td style="width:100%;vertical-align:middle;">${p(escapeHtml(payload.brand.name), 17, INK, 700, '', '1.2')}${p(scopeSub, 13, MUTED, 400, 'margin-top:2px;', '20px')}</td></tr></table>` +
     p(escapeHtml(payload.comparisonNote), 12, MUTED, 400, 'margin:14px 0 16px 0;', '1.4') +
     `<table style="width:100%;border-collapse:separate;border-spacing:0;">` +
-    metricRow(metric('Employer Perception Score', m.eps, '', hiddenEps, m.eps.grade), metric('Sentiment', m.sentiment, '%', hiddenSent)) +
+    metricRow(metric('Overall Score', m.eps, '', hiddenEps), metric('Sentiment', m.sentiment, '%', hiddenSent)) +
     `<tr class="em-metric-spacer"><td colspan="2" style="height:10px;font-size:0;line-height:0;"></td></tr>` +
     metricRow(metric('Visibility', m.visibility, '%', null), metric('Relevance', m.relevance, '', null)) +
     '</table></td></tr></tbody></table>';
@@ -225,13 +245,15 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     ? section('By job function', groupSub(''), groupTable(payload.byFunction, 'Function', payload.sentimentChangeHidden) + (n?.functionsNote ? spacer + p(prose(n.functionsNote), 13, BODY) : ''))
     : '';
 
-  const act = n?.action
+  // The AI-written focus box only stands in when the register has no actions
+  // for this reader; otherwise 'Your actions this quarter' is the plan.
+  const act = n?.action && !payload.actions.length
     ? `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="margin-top:20px;"><tbody><tr><td style="background:#FFF5F8;border:1px solid ${PINK};border-radius:10px;padding:16px;">` +
-      p('Where to act next', 14, INK, 700, 'margin-bottom:4px;', '24px') + p(prose(n.action), 13, BODY) + '</td></tr></tbody></table>'
+      p('Where to focus', 14, INK, 700, 'margin-bottom:4px;', '24px') + p(prose(n.action), 13, BODY) + '</td></tr></tbody></table>'
     : '';
 
   const reportActions = payload.actions.length
-    ? section('From your report', `The actions PerceptionX set out for ${escapeHtml(payload.scope.locationLabel)} in your latest report. This update is written with them in mind.`,
+    ? section('Your actions this quarter', `The actions PerceptionX set out for ${escapeHtml(payload.scope.locationLabel)} in your latest report. This update is written with them in mind.`,
         payload.actions.map(actionCard).join(''))
     : '';
 
@@ -252,15 +274,21 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     ? section('Themes', themeSub, smallTable(payload.sentimentChangeHidden || !prev ? ['Attribute', 'Raised in', 'Sentiment'] : ['Attribute', 'Raised in', 'Sentiment', 'Change'], themeRows))
     : '';
 
+  // Campaign parameters on our own links only, so the app's analytics can
+  // attribute a visit to this quarter's email. Third-party source links are
+  // left alone.
+  const utm = `utm_source=perceptionx&utm_medium=email&utm_campaign=${encodeURIComponent('quarterly-update-' + payload.period.quarter.toLowerCase().replace(/\s+/g, '-'))}`;
+  const withUtm = (url: string) => url + (url.includes('?') ? '&' : '?') + utm;
+
   const button = `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="text-align:center;margin:24px 0 0 0;"><tbody><tr><td>` +
-    `<a href="${escapeHtml(payload.chatUrl)}" style="color:#ffffff;text-decoration:none;background-color:${NAVY};${F}font-size:13px;font-weight:600;padding:11px 20px;border-radius:8px;display:inline-block;" target="_blank">Open your update in PerceptionX →</a>` +
+    `<a href="${escapeHtml(withUtm(payload.chatUrl))}" style="color:#ffffff;text-decoration:none;background-color:${NAVY};${F}font-size:13px;font-weight:600;padding:11px 20px;border-radius:8px;display:inline-block;" target="_blank">Open your update in PerceptionX →</a>` +
     p(escapeHtml(payload.chatNote), 12, MUTED, 400, 'margin-top:10px;') + '</td></tr></tbody></table>';
 
   const year = new Date().getUTCFullYear();
   const footer = `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="margin-top:32px;"><tbody><tr><td>` +
     `<hr style="width:100%;border:none;border-top:1px solid #eaeaea;margin:0 0 16px 0;">` +
-    p(`<a href="${appUrl}/account" style="color:#6b7280;text-decoration:underline;">Manage email preferences</a>`, 12, '#6b7280', 400, 'text-align:center;margin-bottom:12px;', '24px') +
-    p(`<a href="https://perceptionx.ai" style="color:#9ca3af;text-decoration:underline;">perceptionx.ai</a><br><span style="font-size:11px;">© ${year} PerceptionX FZ-LLC</span>`, 12, '#9ca3af', 400, 'text-align:center;', '20px') +
+    p(`<a href="${escapeHtml(withUtm(appUrl + '/account'))}" style="color:#6b7280;text-decoration:underline;">Manage email preferences</a>`, 12, '#6b7280', 400, 'text-align:center;margin-bottom:12px;', '24px') +
+    p(`<a href="${escapeHtml(withUtm('https://perceptionx.ai'))}" style="color:#9ca3af;text-decoration:underline;">perceptionx.ai</a><br><span style="font-size:11px;">© ${year} PerceptionX FZ-LLC</span>`, 12, '#9ca3af', 400, 'text-align:center;', '20px') +
     '</td></tr></tbody></table>';
 
   const preheader = n?.preheader
@@ -274,6 +302,6 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     '</head><body dir="ltr" lang="en" style="background-color:#F4F5F7;padding:0;margin:0;">' + preheader +
     '<table border="0" width="100%" cellpadding="0" cellspacing="0" role="presentation" align="center"><tbody><tr><td style="background-color:#F4F5F7;padding:24px 0;">' +
     `<table align="center" width="100%" class="em-container" border="0" cellpadding="0" cellspacing="0" role="presentation" style="max-width:600px;background-color:#FFFFFF;border:1px solid ${LINE};border-radius:16px;margin:0 auto;"><tbody><tr style="width:100%"><td style="padding:32px;">` +
-    header + intro + scopeCard + changed + markets + functions + act + reportActions + peers + sources + themes + button + footer +
+    header + intro + scopeCard + changed + markets + functions + act + peers + sources + themes + reportActions + button + footer +
     '</td></tr></tbody></table></td></tr></tbody></table></body></html>';
 }

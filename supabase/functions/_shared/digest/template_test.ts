@@ -1,8 +1,9 @@
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
 import { digestSubject, renderDigestHtml, sentimentBadge } from './template.ts';
 import { coverageRows, describeLocation, displayMarket, filterActions, groupRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
-import { cap, digestMarkdown, validateNarrative } from './narrative.ts';
+import { cap, digestMarkdown, narrativeFromReply, validateNarrative } from './narrative.ts';
 import type { DigestPayload } from './types.ts';
+import { bandLabel } from '../px-tools/bands.ts';
 
 const payload: DigestPayload = {
   recipient: { firstName: 'Sreesha', email: 'sreesha@example.com' },
@@ -10,10 +11,10 @@ const payload: DigestPayload = {
   scope: { locationLabel: 'India', preposition: 'in', markets: ['India'], jobFunctions: ['Data Insights & Analytics', 'Integrated ERP'] },
   period: { quarter: 'Q4 2026', short: 'Q4 26', previousQuarter: 'Q3 2026', previousLabel: 'July' },
   metrics: {
-    eps: { value: 78, delta: 1, grade: 'Good' },
-    sentiment: { value: 84, delta: -4 },
-    visibility: { value: 68, delta: 2 },
-    relevance: { value: 80, delta: 11 },
+    eps: { value: 78, delta: 1, grade: 'Strong' },
+    sentiment: { value: 84, delta: -4, grade: 'Excellent' },
+    visibility: { value: 68, delta: 2, grade: 'Needs improvement' },
+    relevance: { value: 80, delta: 11, grade: 'Strong' },
   },
   comparisonNote: 'Change since July compares this quarter with the previous one.',
   sentimentChangeHidden: false,
@@ -68,7 +69,7 @@ Deno.test('deltas render as point pills against the previous wave', () => {
   assertStringIncludes(html, '↑ 11 pts vs July');
   assertStringIncludes(html, '↓ 4 pts vs July');
   assertStringIncludes(html, 'Ford Business Solutions (You)');
-  assertStringIncludes(html, 'Where to act next');
+  assertStringIncludes(html, 'Where to focus');
   assert(!html.includes('—'));
 });
 
@@ -128,10 +129,10 @@ Deno.test('validateNarrative strips dashes, caps lengths and drops notes that do
 
 Deno.test('digestMarkdown carries the figures for the chat thread', () => {
   const md = digestMarkdown(payload);
-  assertStringIncludes(md, '**Employer Perception Score:** 78 (Good) (up 1 points)');
+  assertStringIncludes(md, '**Overall Score:** 78 (Strong) (up 1 points)');
   assertStringIncludes(md, '- LinkedIn: 49% of answers (down 2 points)');
   assertStringIncludes(md, 'open employer questions');
-  assertStringIncludes(md, 'Where to act next');
+  assertStringIncludes(md, 'Where to focus');
 });
 
 Deno.test('domains in prose become navy links, never client auto-links', () => {
@@ -171,23 +172,79 @@ Deno.test('sentiment column is a badge coloured by band', () => {
   assert(sentimentBadge(null).includes('–'));
 });
 
-Deno.test('report actions: market filter, shape and section', () => {
+Deno.test('report actions: market filter, priority order, shape and section', () => {
   const rows = [
-    { organization_id: 'o', register: 'action', action_number: 5, title: 'Claim the local review profiles that doubled', timing: 'act_next', markets: ['Romania', 'Hungary'], problem: 'profession.hu reached 22% of Hungarian answers with no presence.', recommendation: 'Claim profession.hu and keep benefits current.', owner_name: 'Market HR', tracking_status: 'open', lifts: [{ metric: 'Sentiment', attribute: 'Compensation', market: 'Hungary' }], published_at: '2026-10-01' },
-    { organization_id: 'o', register: 'action', action_number: 2, title: 'Germany only', timing: 'act_now', markets: ['Germany'], recommendation: 'x', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
-    { organization_id: 'o', register: 'action', action_number: 1, title: 'Everywhere', timing: null, markets: [], recommendation: 'y', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
-    { organization_id: 'o', register: 'action', action_number: 3, title: 'Done already', timing: 'act_now', markets: ['Hungary'], recommendation: 'z', tracking_status: 'done', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 5, title: 'Claim the local review profiles that doubled', timing: 'act_next', priority: 'high', priority_reason: 'Hungary holds 22% of the negative opinions and the profile is one claim away.', markets: ['Romania', 'Hungary'], problem: 'profession.hu reached 22% of Hungarian answers with no presence.', recommendation: 'Claim profession.hu and keep benefits current.', owner_name: 'Market HR', tracking_status: 'open', lifts: [{ metric: 'Sentiment', attribute: 'Compensation', market: 'Hungary' }], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 2, title: 'Germany only', timing: 'act_now', priority: 'high', markets: ['Germany'], recommendation: 'x', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 1, title: 'Everywhere', timing: null, priority: null, markets: [], recommendation: 'y', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 7, title: 'Labelled global', timing: 'act_later', priority: 'medium', markets: ['Global'], recommendation: 'g', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 4, title: 'Hungary low', timing: 'act_now', priority: 'low', markets: ['Hungary'], recommendation: 'l', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 3, title: 'Done already', timing: 'act_now', priority: 'high', markets: ['Hungary'], recommendation: 'z', tracking_status: 'done', lifts: [], published_at: '2026-10-01' },
     { organization_id: 'o', register: 'watch', action_number: null, title: 'Watch item', markets: ['Hungary'], recommendation: 'w', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
     { organization_id: 'o', register: 'action', action_number: 9, title: 'Unpublished', markets: ['Hungary'], recommendation: 'u', tracking_status: 'open', lifts: [], published_at: null },
+    { organization_id: 'o', register: 'act_now', action_number: null, key: '2026-10-01:site-fbs-ambitionbox', title: 'Make the AmbitionBox profile describe FBS', timing: 'act_now', priority: 'medium', markets: ['Hungary'], recommendation: 'Claim it.', tracking_status: 'in_progress', lifts: [], published_at: '2026-10-01' },
   ];
   const out = filterActions(rows, ['Hungary']);
-  assertEquals(out.map(a => a.number), ['01', '05']);
-  assertEquals(out[1].timing, 'Act next');
-  assertEquals(out[1].lifts, ['Sentiment (Compensation) in Hungary']);
+  // A market view: that market's actions only, High first, then Medium, Low, unlabelled. Global rows belong to the all-markets view.
+  assertEquals(out.map(a => a.number), ['05', '', '04']);
+  assertEquals(out[1].title, 'Make the AmbitionBox profile describe FBS');
+  assertEquals(out[0].priority, 'high');
+  assertEquals(out[0].priorityReason, 'Hungary holds 22% of the negative opinions and the profile is one claim away.');
+  assertEquals(out[2].priority, 'low');
+  assertEquals(out[0].lifts, ['Sentiment (Compensation) in Hungary']);
+  // The all-markets view is the global team's: everything, in priority order.
+  assertEquals(filterActions(rows, []).map(a => a.number), ['02', '05', '07', '', '04', '01']);
   const html = renderDigestHtml({ ...payload, actions: out }, opts);
-  assertStringIncludes(html, 'From your report');
+  assertStringIncludes(html, 'Your actions this quarter');
+  // With actions present the AI focus box is dropped, and the actions sit last, just before the button.
+  assert(!html.includes('Where to focus'));
+  assert(html.indexOf('Your actions this quarter') > html.indexOf('Sources AI reads'));
+  assert(html.indexOf('Your actions this quarter') < html.indexOf('Open your update in PerceptionX'));
+  assert(!digestMarkdown({ ...payload, actions: out }).includes('Where to focus'));
   assertStringIncludes(html, 'Claim the local review profiles that doubled');
-  assertStringIncludes(html, 'ACT NEXT');
+  assertStringIncludes(html, 'Make the AmbitionBox profile describe FBS');
+  assert(!html.includes('margin-right:8px;"></span>'));
+  assertStringIncludes(html, '>High<');
+  assertStringIncludes(html, '>Medium<');
+  assertStringIncludes(html, 'title="Hungary holds 22% of the negative opinions');
+  assert(!/act (now|next|later)/i.test(html), 'timing wording never reaches the email');
   assertStringIncludes(html, 'href="https://profession.hu"');
-  assert(!renderDigestHtml(payload, opts).includes('From your report'));
+  assert(!renderDigestHtml(payload, opts).includes('Your actions this quarter'));
+  const md = digestMarkdown({ ...payload, actions: out });
+  assertStringIncludes(md, '(high priority)');
+  assert(!/act (now|next|later)/i.test(md));
+});
+
+Deno.test('narrative comes from the tool call, with text JSON as the fallback', () => {
+  const input = { preheader: 'p', callouts: [{ title: 't', body: 'b' }], functionsNote: null, marketsNote: null, action: 'a' };
+  assertEquals(narrativeFromReply([{ type: 'text', text: 'Here you go' }, { type: 'tool_use', name: 'write_update', input }]), input);
+  assertEquals(narrativeFromReply([{ type: 'text', text: '```json\n{"preheader":"p","callouts":[],"functionsNote":null,"marketsNote":null,"action":"a"}\n```' }]).action, 'a');
+  let failed = false;
+  try { narrativeFromReply([{ type: 'text', text: '{"preheader": "He said "no" and left", "action": "a"}' }]); } catch { failed = true; }
+  assert(failed);
+});
+
+Deno.test('score bands: one definition for every surface', () => {
+  assertEquals(bandLabel('eps', 67), 'Needs improvement');
+  assertEquals(bandLabel('eps', 70), 'Fair');
+  assertEquals(bandLabel('eps', 76), 'Strong');
+  assertEquals(bandLabel('eps', 84), 'Excellent');
+  assertEquals(bandLabel('sentiment', 62), 'Fair');
+  assertEquals(bandLabel('sentiment', 57), 'Needs improvement');
+  assertEquals(bandLabel('visibility', 78), 'Strong');
+  assertEquals(bandLabel('relevance', 69), 'Needs improvement');
+  assertEquals(bandLabel('relevance', null), null);
+  const html = renderDigestHtml(payload, opts);
+  assertStringIncludes(html, '>Overall Score<');
+  assert(!html.includes('Employer Perception Score'));
+  assertStringIncludes(html, '>Strong</span>');
+});
+
+Deno.test('our own links carry campaign parameters for the quarter; source links do not', () => {
+  const html = renderDigestHtml(payload, opts);
+  const utm = 'utm_source=perceptionx&amp;utm_medium=email&amp;utm_campaign=quarterly-update-q4-2026';
+  assertStringIncludes(html, `href="https://app.perceptionx.ai/chat?c=abc&amp;${utm}"`);
+  assertStringIncludes(html, `href="https://app.perceptionx.ai/account?${utm}"`);
+  assertStringIncludes(html, `href="https://perceptionx.ai?${utm}"`);
+  assert(!html.includes('linkedin.com?utm') && !html.includes('linkedin.com/?utm'));
 });

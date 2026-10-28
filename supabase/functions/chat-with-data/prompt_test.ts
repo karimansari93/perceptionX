@@ -5,10 +5,12 @@ import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/st
 import { PX_INSTRUCTIONS, PX_RULES, PX_RULES_TEXT } from '../_shared/px-tools/instructions.ts';
 import { buildSystemPrompt } from './prompt.ts';
 
-Deno.test('rulebook: twelve numbered rules, the phrases the eval pins', () => {
-  assertEquals(PX_RULES.length, 12);
-  for (let i = 1; i <= 11; i++) assertStringIncludes(PX_RULES_TEXT, `\n${i}. `.replace(/^\n1\. $/, '1. '));
+Deno.test('rulebook: thirteen numbered rules, the phrases the eval pins', () => {
+  assertEquals(PX_RULES.length, 13);
+  for (let i = 1; i <= 13; i++) assertStringIncludes(PX_RULES_TEXT, `\n${i}. `.replace(/^\n1\. $/, '1. '));
   assertStringIncludes(PX_INSTRUCTIONS, '_coverage');
+  assertStringIncludes(PX_INSTRUCTIONS, 'get_playbook');
+  assertStringIncludes(PX_INSTRUCTIONS, 'by their title, never by number');
   assertStringIncludes(PX_INSTRUCTIONS, 'never describe it as missing');
   assertStringIncludes(PX_INSTRUCTIONS, 'sample_size');
   assertStringIncludes(PX_INSTRUCTIONS, 'There is no cross-customer data');
@@ -23,6 +25,8 @@ Deno.test('chat prompt embeds the rulebook word for word, adds only persona and 
   assertEquals(prompt.split('Rules for using these tools:').length, 2);
   // Persona names the org; nothing volatile (dates, ids) is interpolated.
   assertStringIncludes(prompt, 'senior employer brand analyst for Ford Motor Company');
+  // The expert persona points at the playbook tool, never at memory.
+  assertStringIncludes(prompt, 'That knowledge comes from get_playbook, never from memory.');
   assert(!/\d{4}-\d{2}-\d{2}/.test(prompt));
   // Byte-stable per org: the cache prefix is the same on every call.
   assertEquals(prompt, buildSystemPrompt('Ford Motor Company'));

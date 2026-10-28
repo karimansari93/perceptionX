@@ -69,19 +69,26 @@ check('initialize returns protocolVersion', typeof init.protocolVersion === 'str
 check('initialize returns instructions', typeof init.instructions === 'string' && init.instructions.includes('_coverage'));
 check('instructions carry the measured-period rule', String(init.instructions).includes('never describe it as missing'));
 check('instructions carry the shares-first rule', String(init.instructions).includes('sample_size'));
+check('instructions: advice only from the playbook and the actions', String(init.instructions).includes('Advice on what to do comes ONLY from get_playbook and get_report_actions'));
+check('instructions: actions by title, no timing', String(init.instructions).includes('by their title, never by number') && String(init.instructions).includes('give no timing'));
+check('instructions: "what should we do" follows the expert steps', String(init.instructions).includes('first get_attribute_themes for X') && String(init.instructions).includes('then get_playbook'));
+check('instructions: no em dashes in the new rules', !/\u2014/.test(String(init.instructions).split('\n').filter((l: string) => /^(1|11|13)\. /.test(l)).join('\n')));
 check('serverInfo.name = perceptionx', init.serverInfo?.name === 'perceptionx');
 
 const toolsList = await rpc('tools/list');
 const toolNames: string[] = (toolsList.tools || []).map((t: any) => t.name);
-check('tools/list returns 16 tools', toolNames.length === 16, `got ${toolNames.length}`);
-for (const required of ['list_companies', 'get_attribute_themes', 'get_visibility', 'get_sources', 'get_competitor_landscape', 'get_trends']) {
+check('tools/list returns 19 tools', toolNames.length === 19, `got ${toolNames.length}`);
+for (const required of ['list_companies', 'get_attribute_themes', 'get_visibility', 'get_sources', 'get_competitor_landscape', 'get_trends', 'get_report_actions', 'get_playbook', 'get_negative_drivers']) {
   check(`tool present: ${required}`, toolNames.includes(required));
 }
 // ChatGPT plugin guidelines: read-only annotations on every tool.
 check('all tools annotated read-only + closed-world', (toolsList.tools || []).every((t: any) =>
   t.annotations?.readOnlyHint === true && t.annotations?.openWorldHint === false));
+// Claude is a tracked platform from September 2026, so a description may
+// name it as included; the never-published models must not appear, and
+// nothing may be framed as excluded.
 check('no tool description mentions excluded models', !(toolsList.tools || []).some((t: any) =>
-  /\b(claude|gemini|deepseek)\b/i.test(String(t.description))));
+  /\b(gemini|deepseek)\b/i.test(String(t.description)) || /excluded models|excludes? (claude|gemini|deepseek)/i.test(String(t.description))));
 
 // ─── Presentation contract ──────────────────────────────────────────────────
 // Quarters + percentages; no raw dates or decimals in numeric payloads; no
@@ -94,7 +101,7 @@ const QUARTER = /^Q[1-4] \d{4}( \(in progress\))?$/;
 // "..._per_answer", and the EPS composite. Anything else numeric inside a
 // list entry is a raw count and must live under sample_size.
 const SHARE_KEY = /(_pct(_|$)|_points$|_per_answer$|^eps$)/;
-const SERIES_KEYS = new Set(['by_job_function', 'top_pages', 'quarterly', 'series', 'sources', 'competitors', 'attributes', 'attribute_summary', 'top_attributes', 'top_themes', 'top_competitors', 'top_sources', 'citations', 'themes', 'model_breakdown', 'by_platform', 'share_of_voice', 'comparison']);
+const SERIES_KEYS = new Set(['by_job_function', 'top_pages', 'quarterly', 'series', 'sources', 'competitors', 'attributes', 'attribute_summary', 'top_attributes', 'top_themes', 'top_competitors', 'top_sources', 'citations', 'themes', 'model_breakdown', 'by_platform', 'share_of_voice', 'comparison', 'periods', 'review_profile_pages']);
 
 function rawCountLeaks(payload: any, path = '$', out: string[] = []): string[] {
   if (Array.isArray(payload)) { payload.forEach((v, i) => rawCountLeaks(v, `${path}[${i}]`, out)); return out; }
@@ -304,9 +311,58 @@ if (busiest) {
     checkPresentation('get_model_breakdown', models);
   }
 
+  // Where the negatives come from: complete attribute shares, sampled
+  // review-profile shares, shares first, candidate experience combined.
+  const { parsed: drivers } = await callTool('get_negative_drivers', { company_id: cid, quarters_back: 2 });
+  check('get_negative_drivers returns without error', !drivers.error, String(drivers.error || ''));
+  if (drivers._coverage?.status === 'found') {
+    check('negative drivers: attributes lead with share of negatives', (drivers.attributes || []).length > 0 && drivers.attributes.every((a: any) => Object.keys(a)[2] === 'share_of_negatives_pct'));
+    check('negative drivers: shares of negatives sum to about 100 in the latest period',
+      Math.abs((drivers.attributes || []).reduce((s: number, a: any) => s + (a.share_of_negatives_pct || 0), 0) - 100) <= (drivers.attributes || []).length);
+    check('negative drivers: review-profile share computed (sampled read did not fail)',
+      !drivers._coverage?.review_profile_note && (drivers.periods || []).every((p: any) => p.sample_size?.answers_sampled > 0),
+      String(drivers._coverage?.review_profile_note || ''));
+    check('negative drivers: matched profile pages are real links', (drivers.review_profile_pages || []).every((p: any) => /^https?:\/\//.test(p.url)));
+    check('negative drivers: candidate experience combined carries the four attributes', drivers.candidate_experience_combined?.attributes?.length === 4);
+    checkPresentation('get_negative_drivers', drivers);
+  }
+
   // Tenant isolation: a foreign UUID must be rejected, never resolved.
   const { parsed: foreign } = await callTool('get_visibility', { company_id: '00000000-0000-4000-8000-000000000000' });
   check('foreign company_id rejected', typeof foreign.error === 'string' && foreign.error.toLowerCase().includes('not in your organization') || typeof foreign.error === 'string');
+}
+
+// ─── Playbook + report actions (organization-scoped) ────────────────────────
+const { parsed: playbook } = await callTool('get_playbook', { topic: 'review_platforms' });
+check('get_playbook returns the topic with its as-of date', playbook._coverage?.status === 'found' && /^\d{4}-\d{2}-\d{2}$/.test(String(playbook.as_of)) && String(playbook.text).includes('kununu'));
+check('get_playbook text carries no em dashes', !String(playbook.text).includes('\u2014'));
+const { parsed: badTopic } = await callTool('get_playbook', { topic: 'nonsense' });
+check('get_playbook unknown topic → no_data with the topic list', badTopic._coverage?.status === 'no_data' && Array.isArray(badTopic.topics) && badTopic.topics.includes('job_posting'));
+
+const { parsed: actions } = await callTool('get_report_actions', {});
+check('get_report_actions has _coverage', !!actions._coverage);
+if (actions._coverage?.status === 'found') {
+  const all = [...(actions.actions || []), ...(actions.watch_items || [])];
+  check('actions carry no number, timing or owner', all.every((a: any) => !('number' in a) && !('timing' in a) && !('owner' in a)));
+  check('actions carry steps as stored', all.every((a: any) => Array.isArray(a.steps) && a.steps.every((s: any) => typeof s.label === 'string' && (s.url === null || /^https?:\/\//.test(s.url)))));
+  check('actions methodology says by title, no timing', (actions._meta?.methodology || []).some((m: string) => m.includes('by their title')));
+  // Market filter: a market keeps its own actions plus the Global ones.
+  const global = (actions.actions || []).filter((a: any) => (a.markets || []).some((m: string) => String(m).toLowerCase() === 'global'));
+  const local = (actions.actions || []).find((a: any) => (a.markets || []).length && !(a.markets || []).some((m: string) => String(m).toLowerCase() === 'global'));
+  if (global.length && local) {
+    const market = String(local.markets[0]);
+    const { parsed: filtered } = await callTool('get_report_actions', { market, include: 'actions' });
+    const got = new Set((filtered.actions || []).map((a: any) => a.title));
+    check(`market filter "${market}" keeps that market's actions`, got.has(local.title));
+    check(`market filter "${market}" keeps the Global actions`, global.every((g: any) => got.has(g.title)), `${got.size} returned`);
+    check(`market filter "${market}" drops other markets' actions`,
+      (filtered.actions || []).every((a: any) => !(a.markets || []).length || (a.markets || []).some((m: string) => String(m).toLowerCase() === market.toLowerCase() || String(m).toLowerCase() === 'global')));
+  }
+  const first = (actions.actions || [])[0];
+  if (first) {
+    const { parsed: byTitle } = await callTool('get_report_actions', { action: first.title, include: 'actions' });
+    check('action filter by title returns that action', (byTitle.actions || []).some((a: any) => a.title === first.title));
+  }
 }
 
 // ─── Phase B: tool-selection eval (optional) ────────────────────────────────

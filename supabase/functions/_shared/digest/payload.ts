@@ -9,6 +9,7 @@
 
 import { readRollups, buildAttributeRows } from '../px-tools/executors-insights.ts';
 import { scoreQuarters } from '../px-tools/executors-core.ts';
+import { bandLabel } from '../px-tools/bands.ts';
 import { resolveScope } from '../px-tools/scope.ts';
 import type { ResolvedScope, ToolContext } from '../px-tools/scope.ts';
 import { CLAUDE_PUBLISHED_OR, EXCLUDED_AI_MODELS_FILTER, monthToQuarter, pct, pointsDelta, sentimentPct } from '../px-tools/helpers.ts';
@@ -332,9 +333,9 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
     period: { quarter: latestQ, short: shortQuarter(latestQ), previousQuarter: previousQ, previousLabel },
     metrics: {
       eps: { value: latest.eps, delta: previous ? latest.eps - previous.eps : null, grade: latest.eps_label },
-      sentiment: { value: latest.positive_sentiment_pct, delta: previous ? pointsDelta(latest.positive_sentiment_pct, previous.positive_sentiment_pct) : null },
-      visibility: { value: latest.visibility_pct, delta: previous ? pointsDelta(latest.visibility_pct, previous.visibility_pct) : null },
-      relevance: { value: latest.relevance_pct, delta: previous ? pointsDelta(latest.relevance_pct, previous.relevance_pct) : null },
+      sentiment: { value: latest.positive_sentiment_pct, delta: previous ? pointsDelta(latest.positive_sentiment_pct, previous.positive_sentiment_pct) : null, grade: bandLabel('sentiment', latest.positive_sentiment_pct) },
+      visibility: { value: latest.visibility_pct, delta: previous ? pointsDelta(latest.visibility_pct, previous.visibility_pct) : null, grade: bandLabel('visibility', latest.visibility_pct) },
+      relevance: { value: latest.relevance_pct, delta: previous ? pointsDelta(latest.relevance_pct, previous.relevance_pct) : null, grade: bandLabel('relevance', latest.relevance_pct) },
     },
     comparisonNote: previous
       ? `Change since ${previousLabel} compares this quarter's collection with the previous one, as the dashboard does.`
@@ -353,18 +354,24 @@ export const regionNames = () => REGIONS.map(r => r.label);
 // The numbered actions PerceptionX published in the client's report live in
 // company_actions (loaded by a migration per report, read by Ask AI). The
 // email shows the open ones whose markets overlap the reader's view, plus
-// organisation-wide ones (no markets), so the owner of a market sees the
-// actions written for it.
+// organisation-wide ones (no markets, or "Global"), so the owner of a market
+// sees the actions written for it. High priority first, then Medium, Low,
+// then unlabelled; the register's timing is never shown.
 
-const TIMING: Record<string, string> = { act_now: 'Act now', act_next: 'Act next', act_later: 'Act later' };
 const normMarket = (m: string) => displayMarket(String(m || '')).trim().toLowerCase();
+// Markets that mean the whole organisation (same list as the dashboard).
+const ORG_WIDE = new Set(['global', 'all markets', 'worldwide']);
+const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
+const priorityOf = (raw: unknown): 'high' | 'medium' | 'low' | null =>
+  raw === 'high' || raw === 'medium' || raw === 'low' ? raw : null;
 
 export function shapeAction(a: Record<string, any>): DigestActionRow {
   const lifts = Array.isArray(a.lifts) ? a.lifts : [];
   return {
     number: a.action_number != null ? String(a.action_number).padStart(2, '0') : '',
     title: String(a.title || ''),
-    timing: a.timing ? (TIMING[String(a.timing)] ?? String(a.timing)) : null,
+    priority: priorityOf(a.priority),
+    priorityReason: a.priority_reason ? String(a.priority_reason) : null,
     markets: (a.markets || []).map((m: string) => displayMarket(String(m))),
     why: a.problem ? String(a.problem) : null,
     whatToDo: String(a.recommendation || ''),
@@ -378,24 +385,31 @@ export function shapeAction(a: Record<string, any>): DigestActionRow {
   };
 }
 
-/** Keep open, published, numbered actions whose markets overlap `markets` (or that carry no market). */
+/**
+ * Keep open, published actions (numbered or not) for this reader's view.
+ * A market view gets only that market's actions: Global actions (no market,
+ * or a market of Global) belong to the global team. An all-markets view is
+ * the global team's, so it gets everything. High, Medium, Low, unlabelled;
+ * then by number.
+ */
 export function filterActions(rows: Record<string, any>[], markets: string[]): DigestActionRow[] {
   const want = new Set(markets.map(normMarket));
+  const rank = (a: Record<string, any>) => PRIORITY_RANK[String(a.priority)] ?? 3;
   return rows
-    .filter(a => a.published_at && a.register !== 'retired' && a.register !== 'watch' && a.action_number != null)
+    .filter(a => a.published_at && a.register !== 'retired' && a.register !== 'watch')
     .filter(a => !['done', 'retired'].includes(String(a.tracking_status || '')))
     .filter(a => {
-      const ms: string[] = a.markets || [];
-      return !ms.length || !want.size || ms.some(m => want.has(normMarket(m)));
+      const ms: string[] = (a.markets || []).map(normMarket).filter(Boolean);
+      return !want.size || ms.some(m => want.has(m));
     })
-    .sort((a, b) => (a.action_number ?? 999) - (b.action_number ?? 999))
+    .sort((a, b) => (rank(a) - rank(b)) || ((a.action_number ?? 999) - (b.action_number ?? 999)) || String(a.title || '').localeCompare(String(b.title || '')))
     .map(shapeAction);
 }
 
 async function reportActions(ctx: ToolContext, markets: string[]): Promise<DigestActionRow[]> {
   const { data, error } = await ctx.admin
     .from('company_actions')
-    .select('organization_id, register, title, cycle_raised, action_number, problem, recommendation, timing, lifts, owner_name, tracking_status, markets, published_at')
+    .select('organization_id, register, title, cycle_raised, action_number, problem, recommendation, priority, priority_reason, lifts, owner_name, tracking_status, markets, published_at')
     .eq('organization_id', ctx.organizationId)
     .not('published_at', 'is', null);
   if (error) { console.warn(`[digest] actions read failed: ${error.message}`); return []; }

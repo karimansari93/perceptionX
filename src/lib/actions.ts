@@ -93,6 +93,11 @@ export interface CompanyAction {
   recommendation: string | null;
   lanes: string[] | null;
   timing: string | null;
+  // Expected effect on what AI tells candidates (share of negative opinions
+  // targeted x how much the client controls x how fast AI picks it up). Not
+  // timing: the client decides when to act.
+  priority: Priority | null;
+  priority_reason: string | null;
   work_kind: string | null;
   source_domain?: string | null;
   company_id?: string | null;
@@ -127,7 +132,14 @@ export const STATUS_LABEL: Record<string, string> = {
   open: 'open', in_progress: 'in progress', done: 'done',
   stalled: 'stalled', escalated: 'escalated', retired: 'retired',
 };
-export const TIMING_LABEL: Record<string, string> = { act_now: 'Act now', act_next: 'Act next', act_later: 'Act later' };
+export type Priority = 'high' | 'medium' | 'low';
+export const PRIORITIES: readonly Priority[] = ['high', 'medium', 'low'];
+export const PRIORITY_LABEL: Record<Priority, string> = { high: 'High', medium: 'Medium', low: 'Low' };
+export const PRIORITY_NOTE = 'Priority is the expected effect on what AI tells candidates. When to act is your call.';
+
+// The stored label, or null for anything else (unlabelled rows, old spellings).
+export const priorityOf = (a: Pick<CompanyAction, 'priority'>): Priority | null =>
+  a.priority === 'high' || a.priority === 'medium' || a.priority === 'low' ? a.priority : null;
 export const WORK_KIND_LABEL: Record<string, string> = {
   reviews: 'Reviews', conversations: 'Conversations', outreach: 'Outreach', profile_claims: 'Profile claims',
   certifications: 'Certifications', owned_content: 'Owned content', social_pr: 'Social and PR',
@@ -165,28 +177,24 @@ export const isWatch = (a: Pick<CompanyAction, 'register'>) => a.register === 'w
 export const isDismissed = (a: Pick<CompanyAction, 'work_status'>) => a.work_status === 'dismissed';
 
 // Same rule as the quarterly email's filterActions: an action matches when
-// any of its markets equals a wanted market (case-insensitive), or it has no
-// markets (organisation-wide). "Global" is also treated as organisation-wide.
+// any of its own markets equals a wanted market (case-insensitive). "Global"
+// and empty markets are the global team's, so they never match a market.
 // No wanted markets = no filter.
 export function matchesMarkets(actionMarkets: string[] | null | undefined, wanted: string[]): boolean {
   const want = new Set(wanted.map(norm).filter(Boolean));
   if (!want.size) return true;
   const mine = (actionMarkets || []).map(norm).filter(Boolean);
-  if (!mine.length || mine.some((m) => ORG_WIDE.has(m))) return true;
   return mine.some((m) => want.has(m));
 }
 
-const TIMING_RANK: Record<string, number> = { act_now: 0, act_next: 1, act_later: 2 };
+const PRIORITY_RANK: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
+const priorityRank = (a: Pick<CompanyAction, 'priority'>) => { const p = priorityOf(a); return p ? PRIORITY_RANK[p] : 3; };
 
-// Act now, Act next, Act later, then no timing; newer report first; then the
-// number printed in the report; legacy rows without a number go last.
+// High, Medium, Low, then unlabelled; then by title. The register's own
+// timing is never used for ordering or display.
 export function compareActions(a: CompanyAction, b: CompanyAction): number {
-  const t = (TIMING_RANK[a.timing ?? ''] ?? 3) - (TIMING_RANK[b.timing ?? ''] ?? 3);
-  if (t) return t;
-  const c = String(b.cycle_raised ?? '').localeCompare(String(a.cycle_raised ?? ''));
-  if (c) return c;
-  const n = (a.action_number ?? 999) - (b.action_number ?? 999);
-  if (n) return n;
+  const p = priorityRank(a) - priorityRank(b);
+  if (p) return p;
   return a.title.localeCompare(b.title);
 }
 
@@ -198,6 +206,7 @@ export interface BoardFilter {
   forYou: boolean;               // false = every action ("All")
   markets: string[];             // the viewer's market spellings; empty = global view
   includeUserId?: string | null; // actions this user owns always show
+  priority?: Priority | null;    // only actions with this label; null or absent = all
 }
 
 // An action is either for one market or global: global when it names no
@@ -210,19 +219,24 @@ export function actionScope(a: Pick<CompanyAction, 'markets'>): { kind: 'market'
     : { kind: 'global' };
 }
 
-// "For you": a market team sees only the actions for its own market; with no
-// market selected (the global view) only the global actions. "All" shows
-// everything, global actions included.
+// "For you" matches the quarterly email: a market team sees only the actions
+// whose markets include its own; the global actions (no market, or "Global")
+// belong to the global team. With no market selected (the all-markets view)
+// everything is for you, since that view is the whole organisation. "All"
+// shows everything.
 export function isForYou(a: Pick<CompanyAction, 'markets'>, markets: string[]): boolean {
-  const scope = actionScope(a);
-  if (!markets.length) return scope.kind === 'global';
-  return scope.kind === 'market' && matchesMarkets([scope.market], markets);
+  if (!markets.length) return true;
+  return matchesMarkets(a.markets, markets);
 }
+
+export const matchesPriority = (a: Pick<CompanyAction, 'priority'>, wanted: Priority | null | undefined) =>
+  !wanted || priorityOf(a) === wanted;
 
 export function buildBoard(actions: CompanyAction[], filter: BoardFilter) {
   const visible = actions
     .filter((a) => !isRetired(a))
     .filter((a) => !filter.forYou || (!!filter.includeUserId && a.assignee_id === filter.includeUserId) || isForYou(a, filter.markets))
+    .filter((a) => matchesPriority(a, filter.priority))
     .sort(compareActions);
   const columns: Record<BoardStatus, CompanyAction[]> = { open: [], in_progress: [], done: [] };
   for (const a of visible.filter((x) => !isWatch(x) && !isDismissed(x))) columns[columnOf(a)].push(a);
@@ -262,8 +276,9 @@ export function noteParts(notes: string | null | undefined): NotePart[] {
 }
 
 // The Overview card: the user's own open actions (in progress first), then
-// unowned suggestions "for you" (their market's own, or global ones in the
-// global view; see isForYou).
+// unowned suggestions "for you" (their market's own plus the global ones, or
+// only global ones in the global view; see isForYou). Both lists run High,
+// Medium, Low (compareActions).
 export function pendingForUser(actions: CompanyAction[], userId: string | null | undefined, markets: string[]) {
   const live = actions.filter((a) => !isRetired(a) && !isWatch(a) && a.work_status !== 'done' && !isDismissed(a));
   const mine = live

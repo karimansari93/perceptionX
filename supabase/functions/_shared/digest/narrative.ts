@@ -1,6 +1,6 @@
 // ─── Quarterly update email: prose ──────────────────────────────────────────
 // The analyst model writes the four prose blocks (callouts, the note under
-// each group table, the one "Where to act next" box, the preheader) against
+// each group table, the one "Where to focus" box, the preheader) against
 // the payload's numbers and the theme evidence the analyst tools return for
 // the weakest attributes. Strict JSON out, validated and length-capped here,
 // so a bad reply degrades to an email without prose rather than a broken
@@ -25,14 +25,15 @@ Hard rules:
 - Use only figures that appear in the payload. Never invent, estimate or round a figure differently. Quote percentages as "44%" and changes as "up 11 points" or "down 4 points".
 - Lead with coverage percentages (share of answers), never relative lifts.
 - The employers list is measured on the basis given in employersNote (usually the open "which employers" questions only). When you compare the client with those employers, say it is on those questions, and never compare the client's headline visibility with an employer's share.
+- Two different measures must never sit in one sentence, one callout or one contrast: the headline visibility (metrics.visibility, named anywhere in any answer) and the client's share in the employers list (named as an employer to consider on the open employer questions). Never write "visible but not considered", "known but not shortlisted" or any framing that sets the two against each other. A callout about the employers list uses only that list's figures, opens by naming the basis ("On the open employer questions, where candidates ask which employers to consider, AI names the client in 9% of answers"), compares with the employers on that list, and says what would put the client on more of those answers. The headline visibility belongs in its own callout, or in none.
 - Never name an AI assistant, model or vendor. Say "AI" or "AI assistants".
 - Never use an em dash or en dash. Use commas, full stops or colons.
 - Never mention raw counts of answers, responses, prompts or themes.
 - Do not name any company other than the client, the employers in the payload's employers list, and the sources in the payload's sources list.
 - Each callout is one finding a reader could disagree with (title), then the figure, a comparison, and why it matters (body).
-- When payload.actions is not empty, those are the numbered actions PerceptionX published in the client's report for this reader's markets. The action block then points at one of them: name it by number and title, say what this quarter's figures say about it, and restate its what-to-do. Never propose a different action while the list is not empty, and the callouts may refer to a listed action by number when a figure bears on it.
+- When payload.actions is not empty, those are the actions PerceptionX published in the client's report for this reader's markets. The action block then points at one of them: name it by title (and number when it has one), say what this quarter's figures say about it, and restate its what-to-do. Never propose a different action while the list is not empty, and the callouts may refer to a listed action by title when a figure bears on it.
 - When payload.actions is empty, the action names the attribute, the page or source AI reads most for it (from the payload or evidence), what that page says or does not say (from the evidence), and one concrete thing to publish. One recommendation, not a list.
-- Reply with JSON only, no code fences, matching exactly:
+- Reply by calling the write_update tool once with these fields (no prose outside the tool call):
 {"preheader": string, "callouts": [{"title": string, "body": string}], "functionsNote": string|null, "marketsNote": string|null, "action": string}
 - 3 or 4 callouts. preheader under ${LIMITS.preheader} characters. title under ${LIMITS.title}. body under ${LIMITS.body}. notes under ${LIMITS.note}. action under ${LIMITS.action}.
 - functionsNote is null when the payload has fewer than two job functions; marketsNote is null when it has fewer than two markets.`;
@@ -48,6 +49,35 @@ export const cap = (s: unknown, max: number) => {
   if (lastStop > max * 0.4) return head.slice(0, lastStop + 1);
   return head.replace(/\s+\S*$/, '').replace(/[,:;]$/, '') + '.';
 };
+
+// The model answers through a forced tool call, so the reply is structured
+// JSON from the API rather than text we have to parse. A text reply (older
+// models, or a refusal to use the tool) still goes through the text parser.
+const NARRATIVE_TOOL = {
+  name: 'write_update',
+  description: 'Write the prose blocks of the quarterly update email.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      preheader: { type: 'string' },
+      callouts: {
+        type: 'array',
+        items: { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' } }, required: ['title', 'body'] },
+      },
+      functionsNote: { type: ['string', 'null'] },
+      marketsNote: { type: ['string', 'null'] },
+      action: { type: 'string' },
+    },
+    required: ['preheader', 'callouts', 'functionsNote', 'marketsNote', 'action'],
+  },
+};
+
+/** The narrative object from a model reply: the tool call's input, else the first JSON object in its text. */
+export function narrativeFromReply(content: Array<{ type: string; name?: string; input?: unknown; text?: string }>): any {
+  const tool = content.find(b => b.type === 'tool_use' && b.name === NARRATIVE_TOOL.name);
+  if (tool && tool.input && typeof tool.input === 'object') return tool.input;
+  return parseJsonReply(content.filter(b => b.type === 'text').map(b => b.text || '').join(''));
+}
 
 function parseJsonReply(text: string): any {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
@@ -101,17 +131,27 @@ export async function writeNarrative(
 ): Promise<DigestNarrative> {
   const ev = await evidence(ctx, payload, companyId, locationKey).catch(err => `Evidence unavailable: ${err?.message || err}`);
   const user = `PAYLOAD (all figures already verified):\n${payloadForPrompt(payload)}\n\nEVIDENCE (themes and sources for the weakest attributes, from the analyst tools):\n${ev}\n\nWrite the JSON now.`;
-  const text = await withClaudeKey(async (apiKey) => {
+  const ask = (extra: string) => withClaudeKey(async (apiKey) => {
     const client = new Anthropic({ apiKey });
     const reply = await client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
       system: RULES,
-      messages: [{ role: 'user', content: user }],
+      tools: [NARRATIVE_TOOL as any],
+      tool_choice: { type: 'tool', name: NARRATIVE_TOOL.name },
+      messages: [{ role: 'user', content: user + extra }],
     });
-    return reply.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+    return reply.content as any[];
   });
-  return validateNarrative(parseJsonReply(text), payload);
+  try {
+    return validateNarrative(narrativeFromReply(await ask('')), payload);
+  } catch (err) {
+    // One retry: a malformed or incomplete reply is rare, and a second attempt
+    // with the failure named almost always lands. A second failure surfaces.
+    const why = err instanceof Error ? err.message : String(err);
+    console.warn(`[digest] narrative retry: ${why}`);
+    return validateNarrative(narrativeFromReply(await ask(`\n\nYour previous reply could not be used (${why}). Call write_update again with every field filled.`)), payload);
+  }
 }
 
 // A Markdown copy of the update for the pre-created chat thread: the same
@@ -126,7 +166,7 @@ export function digestMarkdown(payload: DigestPayload): string {
   lines.push('');
   lines.push(`Here is how AI assistants described ${payload.brand.name} to candidates ${payload.scope.preposition} ${payload.scope.locationLabel} this quarter${prev ? `, and what changed since ${prev}` : ''}.`);
   lines.push('');
-  lines.push(`**Employer Perception Score:** ${m.eps.value ?? 'n/a'} (${m.eps.grade})${payload.sentimentChangeHidden ? '' : d(m.eps.delta)}`);
+  lines.push(`**Overall Score:** ${m.eps.value ?? 'n/a'} (${m.eps.grade})${payload.sentimentChangeHidden ? '' : d(m.eps.delta)}`);
   lines.push(`**Sentiment:** ${m.sentiment.value ?? 'n/a'}%${payload.sentimentChangeHidden ? ' (classifier updated, no change shown)' : d(m.sentiment.delta)}`);
   lines.push(`**Visibility:** ${m.visibility.value ?? 'n/a'}%${d(m.visibility.delta)}`);
   lines.push(`**Relevance:** ${m.relevance.value ?? 'n/a'}${d(m.relevance.delta)}`);
@@ -144,10 +184,10 @@ export function digestMarkdown(payload: DigestPayload): string {
     for (const r of payload.byFunction) lines.push(`- ${r.name}: ${r.positivePct ?? 'n/a'}% positive${payload.sentimentChangeHidden ? '' : d(r.sentimentDelta)}, named in ${r.namedPct ?? 'n/a'}% of answers`);
     if (n?.functionsNote) lines.push('', n.functionsNote);
   }
-  if (n?.action) lines.push('', '### Where to act next', n.action);
+  if (n?.action && !payload.actions.length) lines.push('', '### Where to focus', n.action);
   if (payload.actions.length) {
-    lines.push('', '### From your report');
-    for (const a of payload.actions) lines.push(`- **${a.number} ${a.title}**${a.timing ? ` (${a.timing})` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
+    lines.push('', '### Your actions this quarter');
+    for (const a of payload.actions) lines.push(`- **${a.number ? `${a.number} ` : ''}${a.title}**${a.priority ? ` (${a.priority} priority)` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
   }
   if (payload.employers.length) {
     lines.push('', '### Employers AI names alongside you');

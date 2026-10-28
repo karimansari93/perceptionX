@@ -59,14 +59,30 @@ export const PX_TOOLS: PxToolDef[] = [
   {
     name: 'get_report_actions',
     progressLabel: 'Reading your report and actions',
-    description: "What PerceptionX reported and recommended to this organization: the latest published report snapshot (period, as-of date, scope, headline figures, market / attribute / source breakdowns, and which metrics are final or provisional), the numbered actions with problem, what AI says, where AI reads it (source and coverage), exact URLs, what to do, lane, timing, what it lifts, verified facts with check dates, owner and status, plus watch items. Use for 'what should we fix first', 'what did you recommend', 'why is X low', 'what is the status of action 2', 'is our score final'. Cite the action number, the report period and the as-of date (cite_as). Say 'provisional' when quoting a metric whose metric_status is provisional. Pair with the live tools when the user wants current data, and give both figures with their dates if they differ. Read-only: status and owner are set by PerceptionX. No company_id needed.",
+    description: "What PerceptionX reported and recommended to this organization: the latest published report snapshot (period, as-of date, scope, headline figures, market / attribute / source breakdowns, and which metrics are final or provisional), and the actions, each with a title, problem, what AI says, where AI reads it (source and coverage), exact URLs, what to do, the steps with their links, lane, priority (High / Medium / Low, the expected effect on what AI tells candidates, with its reason), what it lifts, verified facts with check dates and status, plus watch items. Actions come High first. Use for 'what should we fix first', 'what did you recommend', 'why is X low', 'what is the status of the kununu action', 'is our score final'. Refer to actions by their title, cite the report period and the as-of date (cite_as), and give no timing: the organization decides when. Say 'provisional' when quoting a metric whose metric_status is provisional. Pair with the live tools when the user wants current data, and give both figures with their dates if they differ. Read-only: status is set in the PerceptionX platform. No company_id needed.",
     input_schema: {
       type: 'object',
       properties: {
-        market: { type: 'string', description: "Optional market filter, e.g. 'Germany'. Keeps actions for that market plus organization-wide items." },
-        action_number: { type: 'number', description: 'Optional action number from the report (1, 2, 3 ...).' },
+        market: { type: 'string', description: "Optional market or region filter, e.g. 'Germany', 'DE' or 'Europe'. Keeps actions for that market (every market in the region) plus organization-wide and Global items." },
+        action: { type: 'string', description: "Optional action title, or part of one, matched case-insensitively (e.g. 'kununu')." },
         include: { type: 'string', description: "'all' (default) | 'report' | 'actions' | 'watch'" },
       },
+    },
+  },
+  {
+    name: 'get_playbook',
+    progressLabel: 'Checking the playbook',
+    description: "PerceptionX's employer reputation playbook: how to move the score, how to diagnose a weak topic, who at an employer can change what, what a strong career site and job posting contain and where a block goes on a posting so AI and job boards read it, AI readability, pay transparency law, candidate experience, employer lists and awards, review platform capabilities and rules, and how to write a recommendation. Use for any 'what should we do', 'how do we fix', 'how does Glassdoor / kununu / our career site work' question, together with the data tools. This is guidance, not data about the organization: never present it as a measurement, and take every figure from the data tools. Dated facts (laws, platform features, list deadlines) carry an as-of date: say it and tell the user to check before acting.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        topic: {
+          type: 'string',
+          enum: ['prioritise', 'diagnose', 'who_owns', 'career_site', 'job_posting', 'ai_readability', 'pay_transparency', 'candidate_experience', 'lists_awards', 'levers', 'review_platforms', 'writing_recommendations'],
+          description: "prioritise (where the score can move, how to rank work and state impact), diagnose (the four questions before recommending), who_owns (which team at an employer can change what), career_site (what strong career sites publish), job_posting (where a block goes on a posting), ai_readability (what AI assistants can read), pay_transparency (law by region), candidate_experience (complaints, causes, applicant tracking system levers, awards, inviting reviews), lists_awards (which lists can be entered), levers (what changes what AI reads, and what not to recommend), review_platforms (Glassdoor, Indeed, kununu, AmbitionBox, Seek and others: features, rules, law), writing_recommendations (how to write one).",
+        },
+      },
+      required: ['topic'],
     },
   },
   {
@@ -278,6 +294,22 @@ export const PX_TOOLS: PxToolDef[] = [
         location: locationProp,
         job_function: jobFunctionProp,
         quarters_back: quartersBackProp(4),
+        include_siblings: includeSiblingsProp,
+      },
+      required: ['company_id'],
+    },
+  },
+  {
+    name: 'get_negative_drivers',
+    progressLabel: 'Finding where the negatives come from',
+    description: "Where this organization's negative opinions come from, for the latest measured quarter with the previous one for comparison: for each employer brand attribute, its share of all negative opinions (negative themes on the attribute as a % of every negative theme in scope), its positive-sentiment %, and the share of its negatives that sit in answers citing one of the organization's own review-profile pages (Glassdoor, Indeed, kununu, AmbitionBox, Seek, Jobstreet, Comparably and the smaller review sites), plus the overall share of negatives in such answers, the four candidate experience attributes combined, and the review-profile pages AI cites most (link these). Filter by market (location) and/or job function. Use for 'where do our negatives come from', 'which topics hold most of the negative opinion', 'how much of the negative is review-site driven', and as the first step before recommending what to fix (then get_attribute_themes for the topic, get_report_actions and get_playbook). Change is in percentage points vs the previous measured period. The review-profile shares are computed on a random sample of the answers that carry negative opinions, and sample_size says how many. " + PERIOD_SHARE_NOTE,
+    input_schema: {
+      type: 'object',
+      properties: {
+        company_id: companyIdProp,
+        location: locationProp,
+        job_function: jobFunctionProp,
+        quarters_back: quartersBackProp(2),
         include_siblings: includeSiblingsProp,
       },
       required: ['company_id'],

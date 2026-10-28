@@ -56,17 +56,19 @@ export interface DigestNarrative {
   functionsNote: string | null;
   /** Short paragraph under the market table (multi-market views only). */
   marketsNote: string | null;
-  /** The one "Where to act next" recommendation. */
+  /** The one "Where to focus" recommendation. */
   action: string;
 }
 
-/** One numbered action from the client's published report, scoped to this reader's markets. */
+/** One action from the client's published report, scoped to this reader's markets. */
 export interface DigestActionRow {
-  /** "05" as printed in the report. */
+  /** "05" as printed in the report, or "" for an action without a number. */
   number: string;
   title: string;
-  /** "Act now", "Act next", "Act later" or null. */
-  timing: string | null;
+  /** Expected effect on what AI tells candidates: high, medium, low, or null when unlabelled. Not timing. */
+  priority: 'high' | 'medium' | 'low' | null;
+  /** One sentence on why, in the client's own figures. */
+  priorityReason: string | null;
   markets: string[];
   /** The report's "Why" (problem). */
   why: string | null;
@@ -99,11 +101,12 @@ export interface DigestPayload {
     /** How the previous collection is named in prose: "July". */
     previousLabel: string | null;
   };
+  /** Each metric carries its band label (Excellent, Strong, Fair, Needs improvement), or null when the value is missing. */
   metrics: {
     eps: DigestMetric & { grade: string };
-    sentiment: DigestMetric;
-    visibility: DigestMetric;
-    relevance: DigestMetric;
+    sentiment: DigestMetric & { grade: string | null };
+    visibility: DigestMetric & { grade: string | null };
+    relevance: DigestMetric & { grade: string | null };
   };
   /** One line under the scope card explaining how change is measured. */
   comparisonNote: string;
