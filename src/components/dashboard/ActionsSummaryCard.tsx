@@ -10,10 +10,11 @@ import { useCompanyActions } from '@/hooks/useCompanyActions';
 import { actionScope, displayTitle, pendingForUser, typeLabel, type CompanyAction } from '@/lib/actions';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ActionsEmptyState } from './ActionsEmptyState';
+import { PriorityChip } from './PriorityChip';
 
-// Fixed at three so the card never grows the Overview's top row; the header
+// Fixed at five so the card fits the Overview's top row height; the header
 // count and "View all" cover the rest.
-const MAX_ROWS = 3;
+const MAX_ROWS = 5;
 
 export function ActionsSummaryCard({ markets }: { markets: string[] }) {
   const navigate = useNavigate();
@@ -48,7 +49,7 @@ export function ActionsSummaryCard({ markets }: { markets: string[] }) {
 
       <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
         {query.isLoading ? (
-          <div className="space-y-2 pt-1">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
+          <div className="space-y-2 pt-1">{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
         ) : rows.length === 0 ? (
           <ActionsEmptyState caughtUp={actions.length > 0} />
         ) : (
@@ -58,22 +59,26 @@ export function ActionsSummaryCard({ markets }: { markets: string[] }) {
                 <button
                   type="button"
                   onClick={() => navigate(`/dashboard/actions?action=${action.id}`)}
-                  className="flex w-full items-center gap-2.5 py-2 text-left hover:bg-gray-50"
+                  className="flex w-full items-start gap-2.5 py-1 text-left hover:bg-gray-50"
+                  title={[
+                    typeLabel(action)?.label ?? null,
+                    (() => { const sc = actionScope(action); return sc.kind === 'global' ? 'Global' : sc.market; })(),
+                    isMine ? (action.work_status === 'in_progress' ? 'In progress' : 'To do') : null,
+                  ].filter(Boolean).join(' · ')}
                 >
                   {isMine && action.work_status === 'in_progress'
-                    ? <CircleDot className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-                    : <CircleDashed className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
-                  {/* One line per action so three fit beside the chat box; the
-                      type, market and status show on hover. */}
-                  <span
-                    className="line-clamp-1 min-w-0 flex-1 text-[13px] text-gray-900"
-                    title={[
-                      typeLabel(action)?.label ?? null,
-                      (() => { const sc = actionScope(action); return sc.kind === 'global' ? 'Global' : sc.market; })(),
-                      isMine ? (action.work_status === 'in_progress' ? 'In progress' : 'To do') : null,
-                    ].filter(Boolean).join(' · ')}
-                  >
-                    {displayTitle(action)}
+                    ? <CircleDot className="mt-[3px] h-3.5 w-3.5 shrink-0 text-amber-500" />
+                    : <CircleDashed className="mt-[3px] h-3.5 w-3.5 shrink-0 text-gray-400" />}
+                  {/* Title and priority on one line, the problem on a second
+                      clipped line; type, market and status show on hover. */}
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="line-clamp-1 min-w-0 flex-1 text-[13px] leading-5 text-gray-900">{displayTitle(action)}</span>
+                      <PriorityChip action={action} className="shrink-0" />
+                    </span>
+                    {action.problem && (
+                      <span className="block truncate text-xs leading-4 text-gray-500">{action.problem}</span>
+                    )}
                   </span>
                 </button>
               </li>

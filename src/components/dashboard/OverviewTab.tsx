@@ -1058,7 +1058,7 @@ export const OverviewTab = memo(({
           question; the score row and everything else sit below it. The
           overview never scrolls: hero and score row are fixed height, the
           summary row takes the rest and its cards scroll internally. */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 w-full flex-shrink-0">
+      <div className="grid grid-cols-1 lg:grid-cols-3 lg:h-[284px] gap-4 w-full flex-shrink-0">
         <div className="lg:col-span-2">
           <AskAiHero companyName={companyName} market={market} jobFunction={selectedJobFunctionFilter} />
         </div>
@@ -1069,17 +1069,17 @@ export const OverviewTab = memo(({
         {/* EPS card — the score sits in the header's right slot; the chart fills the body. */}
         <Card
           data-tour="eps-card"
-          className="flex h-[224px] cursor-pointer flex-col overflow-hidden rounded-lg border border-gray-200 bg-white p-0 shadow-[0_1px_2px_rgba(0,0,0,.05)]"
+          className="flex h-[248px] cursor-pointer flex-col overflow-hidden rounded-lg border border-gray-200 bg-white p-0 shadow-[0_1px_2px_rgba(0,0,0,.05)]"
           onClick={() => setIsEpsDrilldownOpen(true)}
         >
           <div className="flex flex-none items-center gap-1.5 px-4 pb-2.5 pt-[14px]">
-            <CardTitle className="text-[15px] font-medium text-[#13274F]">EPS</CardTitle>
+            <CardTitle className="text-[15px] font-medium text-[#13274F]">Overall Score</CardTitle>
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="cursor-pointer"><HelpCircle className="h-3.5 w-3.5 text-gray-400 hover:text-gray-600" /></span>
                 </TooltipTrigger>
-                <TooltipContent side="top">The Employer Perception Score is an aggregate of sentiment, visibility and relevance.</TooltipContent>
+                <TooltipContent side="top">The Overall Score is an aggregate of sentiment, visibility and relevance.</TooltipContent>
               </Tooltip>
             </TooltipProvider>
             <div className="flex-1" />
@@ -1089,7 +1089,7 @@ export const OverviewTab = memo(({
               <>
                 <span
                   className="font-headline text-2xl font-bold leading-none tracking-[-0.02em] text-[#13274F] tabular-nums"
-                  title={scorecardMetrics.perceptionScore === null ? 'EPS unavailable' : undefined}
+                  title={scorecardMetrics.perceptionScore === null ? 'Overall Score unavailable' : undefined}
                   data-metric="eps"
                   data-unavailable={scorecardMetrics.perceptionScore === null ? 'true' : undefined}
                 >
@@ -1120,7 +1120,7 @@ export const OverviewTab = memo(({
             )}
             {!metricsCalculating && !metricsError && scorecardMetrics.perceptionScore === null && (
               <p className="px-4 pt-1 text-[12px] leading-snug text-gray-500">
-                EPS needs sentiment, visibility and relevance. At least one isn't available for this selection yet.
+                The Overall Score needs sentiment, visibility and relevance. At least one isn't available for this selection yet.
               </p>
             )}
             {!metricsCalculating && scorecardMetrics.perceptionScore !== null && epsChartData.length > 0 && (
@@ -1163,7 +1163,7 @@ export const OverviewTab = memo(({
         {/* Breakdown card — three rows: name · value · delta, bar, "was X%". */}
         <Card
           data-tour="eps-breakdown"
-          className="flex h-[224px] cursor-pointer flex-col overflow-hidden rounded-lg border border-gray-200 bg-white p-0 shadow-[0_1px_2px_rgba(0,0,0,.05)]"
+          className="flex h-[248px] cursor-pointer flex-col overflow-hidden rounded-lg border border-gray-200 bg-white p-0 shadow-[0_1px_2px_rgba(0,0,0,.05)]"
           onClick={() => setIsEpsDrilldownOpen(true)}
         >
           <div className="flex flex-none items-center gap-1.5 px-4 pb-2 pt-[14px]">
