@@ -194,6 +194,11 @@ Deno.test('report actions: market filter, priority order, shape and section', ()
   assertEquals(filterActions(rows, []).map(a => a.number), ['07', '01']);
   const html = renderDigestHtml({ ...payload, actions: out }, opts);
   assertStringIncludes(html, 'Your actions this quarter');
+  // With actions present the AI focus box is dropped, and the actions sit last, just before the button.
+  assert(!html.includes('Where to focus'));
+  assert(html.indexOf('Your actions this quarter') > html.indexOf('Sources AI reads'));
+  assert(html.indexOf('Your actions this quarter') < html.indexOf('Open your update in PerceptionX'));
+  assert(!digestMarkdown({ ...payload, actions: out }).includes('Where to focus'));
   assertStringIncludes(html, 'Claim the local review profiles that doubled');
   assertStringIncludes(html, 'Make the AmbitionBox profile describe FBS');
   assert(!html.includes('margin-right:8px;"></span>'));

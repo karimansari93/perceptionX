@@ -184,7 +184,7 @@ export function digestMarkdown(payload: DigestPayload): string {
     for (const r of payload.byFunction) lines.push(`- ${r.name}: ${r.positivePct ?? 'n/a'}% positive${payload.sentimentChangeHidden ? '' : d(r.sentimentDelta)}, named in ${r.namedPct ?? 'n/a'}% of answers`);
     if (n?.functionsNote) lines.push('', n.functionsNote);
   }
-  if (n?.action) lines.push('', '### Where to focus', n.action);
+  if (n?.action && !payload.actions.length) lines.push('', '### Where to focus', n.action);
   if (payload.actions.length) {
     lines.push('', '### Your actions this quarter');
     for (const a of payload.actions) lines.push(`- **${a.number ? `${a.number} ` : ''}${a.title}**${a.priority ? ` (${a.priority} priority)` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
