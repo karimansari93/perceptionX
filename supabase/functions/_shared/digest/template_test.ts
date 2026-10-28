@@ -200,6 +200,15 @@ Deno.test('report actions: market filter, priority order, shape and section', ()
   assert(!html.includes('Where to focus'));
   assert(html.indexOf('Your actions this quarter') > html.indexOf('Sources AI reads'));
   assert(html.indexOf('Your actions this quarter') < html.indexOf('Open your update in PerceptionX'));
+});
+
+Deno.test('our own links carry campaign parameters for the quarter; source links do not', () => {
+  const html = renderDigestHtml(payload, opts);
+  const utm = 'utm_source=perceptionx&amp;utm_medium=email&amp;utm_campaign=quarterly-update-q4-2026';
+  assertStringIncludes(html, `href="https://app.perceptionx.ai/chat?c=abc&amp;${utm}"`);
+  assertStringIncludes(html, `href="https://app.perceptionx.ai/account?${utm}"`);
+  assertStringIncludes(html, `href="https://perceptionx.ai?${utm}"`);
+  assert(!html.includes('linkedin.com?utm') && !html.includes('linkedin.com/?utm'));
   assert(!digestMarkdown({ ...payload, actions: out }).includes('Where to focus'));
   assertStringIncludes(html, 'Claim the local review profiles that doubled');
   assertStringIncludes(html, 'Make the AmbitionBox profile describe FBS');
