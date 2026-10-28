@@ -184,16 +184,16 @@ Deno.test('report actions: market filter, priority order, shape and section', ()
     { organization_id: 'o', register: 'act_now', action_number: null, key: '2026-10-01:site-fbs-ambitionbox', title: 'Make the AmbitionBox profile describe FBS', timing: 'act_now', priority: 'medium', markets: ['Hungary'], recommendation: 'Claim it.', tracking_status: 'in_progress', lifts: [], published_at: '2026-10-01' },
   ];
   const out = filterActions(rows, ['Hungary']);
-  // High first, then Medium, Low, unlabelled; Global rows match every market.
-  assertEquals(out.map(a => a.number), ['05', '07', '', '04', '01']);
-  assertEquals(out[2].title, 'Make the AmbitionBox profile describe FBS');
+  // A market view: that market's actions only, High first, then Medium, Low, unlabelled. Global rows go to the all-markets view.
+  assertEquals(out.map(a => a.number), ['05', '', '04']);
+  assertEquals(out[1].title, 'Make the AmbitionBox profile describe FBS');
   assertEquals(out[0].priority, 'high');
   assertEquals(out[0].priorityReason, 'Hungary holds 22% of the negative opinions and the profile is one claim away.');
-  assertEquals(out[4].priority, null);
+  assertEquals(out[2].priority, 'low');
   assertEquals(out[0].lifts, ['Sentiment (Compensation) in Hungary']);
-  assertEquals(filterActions(rows, []).map(a => a.number), ['02', '05', '07', '', '04', '01']);
+  assertEquals(filterActions(rows, []).map(a => a.number), ['07', '01']);
   const html = renderDigestHtml({ ...payload, actions: out }, opts);
-  assertStringIncludes(html, 'From your report');
+  assertStringIncludes(html, 'Your actions this quarter');
   assertStringIncludes(html, 'Claim the local review profiles that doubled');
   assertStringIncludes(html, 'Make the AmbitionBox profile describe FBS');
   assert(!html.includes('margin-right:8px;"></span>'));
@@ -202,7 +202,7 @@ Deno.test('report actions: market filter, priority order, shape and section', ()
   assertStringIncludes(html, 'title="Hungary holds 22% of the negative opinions');
   assert(!/act (now|next|later)/i.test(html), 'timing wording never reaches the email');
   assertStringIncludes(html, 'href="https://profession.hu"');
-  assert(!renderDigestHtml(payload, opts).includes('From your report'));
+  assert(!renderDigestHtml(payload, opts).includes('Your actions this quarter'));
   const md = digestMarkdown({ ...payload, actions: out });
   assertStringIncludes(md, '(high priority)');
   assert(!/act (now|next|later)/i.test(md));

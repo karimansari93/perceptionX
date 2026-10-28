@@ -245,7 +245,7 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     : '';
 
   const reportActions = payload.actions.length
-    ? section('From your report', `The actions PerceptionX set out for ${escapeHtml(payload.scope.locationLabel)} in your latest report. This update is written with them in mind.`,
+    ? section('Your actions this quarter', `The actions PerceptionX set out for ${escapeHtml(payload.scope.locationLabel)} in your latest report. This update is written with them in mind.`,
         payload.actions.map(actionCard).join(''))
     : '';
 
