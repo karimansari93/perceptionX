@@ -239,3 +239,12 @@ Deno.test('score bands: one definition for every surface', () => {
   assert(!html.includes('Employer Perception Score'));
   assertStringIncludes(html, '>Strong</span>');
 });
+
+Deno.test('our own links carry campaign parameters for the quarter; source links do not', () => {
+  const html = renderDigestHtml(payload, opts);
+  const utm = 'utm_source=perceptionx&amp;utm_medium=email&amp;utm_campaign=quarterly-update-q4-2026';
+  assertStringIncludes(html, `href="https://app.perceptionx.ai/chat?c=abc&amp;${utm}"`);
+  assertStringIncludes(html, `href="https://app.perceptionx.ai/account?${utm}"`);
+  assertStringIncludes(html, `href="https://perceptionx.ai?${utm}"`);
+  assert(!html.includes('linkedin.com?utm') && !html.includes('linkedin.com/?utm'));
+});

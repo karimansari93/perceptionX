@@ -274,15 +274,21 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     ? section('Themes', themeSub, smallTable(payload.sentimentChangeHidden || !prev ? ['Attribute', 'Raised in', 'Sentiment'] : ['Attribute', 'Raised in', 'Sentiment', 'Change'], themeRows))
     : '';
 
+  // Campaign parameters on our own links only, so the app's analytics can
+  // attribute a visit to this quarter's email. Third-party source links are
+  // left alone.
+  const utm = `utm_source=perceptionx&utm_medium=email&utm_campaign=${encodeURIComponent('quarterly-update-' + payload.period.quarter.toLowerCase().replace(/\s+/g, '-'))}`;
+  const withUtm = (url: string) => url + (url.includes('?') ? '&' : '?') + utm;
+
   const button = `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="text-align:center;margin:24px 0 0 0;"><tbody><tr><td>` +
-    `<a href="${escapeHtml(payload.chatUrl)}" style="color:#ffffff;text-decoration:none;background-color:${NAVY};${F}font-size:13px;font-weight:600;padding:11px 20px;border-radius:8px;display:inline-block;" target="_blank">Open your update in PerceptionX →</a>` +
+    `<a href="${escapeHtml(withUtm(payload.chatUrl))}" style="color:#ffffff;text-decoration:none;background-color:${NAVY};${F}font-size:13px;font-weight:600;padding:11px 20px;border-radius:8px;display:inline-block;" target="_blank">Open your update in PerceptionX →</a>` +
     p(escapeHtml(payload.chatNote), 12, MUTED, 400, 'margin-top:10px;') + '</td></tr></tbody></table>';
 
   const year = new Date().getUTCFullYear();
   const footer = `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="margin-top:32px;"><tbody><tr><td>` +
     `<hr style="width:100%;border:none;border-top:1px solid #eaeaea;margin:0 0 16px 0;">` +
-    p(`<a href="${appUrl}/account" style="color:#6b7280;text-decoration:underline;">Manage email preferences</a>`, 12, '#6b7280', 400, 'text-align:center;margin-bottom:12px;', '24px') +
-    p(`<a href="https://perceptionx.ai" style="color:#9ca3af;text-decoration:underline;">perceptionx.ai</a><br><span style="font-size:11px;">© ${year} PerceptionX FZ-LLC</span>`, 12, '#9ca3af', 400, 'text-align:center;', '20px') +
+    p(`<a href="${escapeHtml(withUtm(appUrl + '/account'))}" style="color:#6b7280;text-decoration:underline;">Manage email preferences</a>`, 12, '#6b7280', 400, 'text-align:center;margin-bottom:12px;', '24px') +
+    p(`<a href="${escapeHtml(withUtm('https://perceptionx.ai'))}" style="color:#9ca3af;text-decoration:underline;">perceptionx.ai</a><br><span style="font-size:11px;">© ${year} PerceptionX FZ-LLC</span>`, 12, '#9ca3af', 400, 'text-align:center;', '20px') +
     '</td></tr></tbody></table>';
 
   const preheader = n?.preheader
