@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { ExternalLink, TrendingDown, TrendingUp } from 'lucide-react';
 import { Favicon } from '@/components/ui/favicon';
 import { cn } from '@/lib/utils';
@@ -56,7 +56,13 @@ export function extractContext(markdown: string): { body: string; context: Answe
   return { body: markdown.replace(PX_CONTEXT_FENCE, '').replace(/^\s*\n/, ''), context };
 }
 
-const rise = 'animate-in fade-in slide-in-from-bottom-2 duration-300';
+// True while the answer is still streaming. The markdown tree is rebuilt on
+// every chunk and a card can remount as the text before it settles, so the
+// entry animation only runs once the answer is complete; while it streams a
+// card simply appears.
+export const StreamingContext = createContext(false);
+const RISE = 'animate-in fade-in slide-in-from-bottom-2 duration-300';
+const useRise = () => (useContext(StreamingContext) ? '' : RISE);
 
 function Delta({ value, size = 'sm' }: { value: number | null | undefined; size?: 'sm' | 'xs' }) {
   if (value === null || value === undefined || Number.isNaN(value)) return null;
@@ -76,6 +82,7 @@ export function BlockSkeleton() {
 
 // c. Metric cards
 export function StatTiles({ data }: { data: any }) {
+  const rise = useRise();
   const tiles = Array.isArray(data) ? data.filter(t => t && t.label != null && t.value != null).slice(0, 4) : [];
   if (!tiles.length) return null;
   return (
@@ -96,6 +103,7 @@ export function StatTiles({ data }: { data: any }) {
 
 // d. Contribution chart — pink for what pulled down, teal for what lifted.
 export function ContributionBars({ data }: { data: any }) {
+  const rise = useRise();
   const rows = Array.isArray(data?.rows) ? data.rows.filter((r: any) => r && r.label != null && typeof r.value === 'number').slice(0, 12) : [];
   if (!rows.length) return null;
   const unit = data?.unit === 'pts' ? '' : typeof data?.unit === 'string' ? data.unit : '';
@@ -128,6 +136,7 @@ export function ContributionBars({ data }: { data: any }) {
 
 // g. Follow-ups
 export function FollowUps({ data, onAsk }: { data: any; onAsk?: (q: string) => void }) {
+  const rise = useRise();
   const items = Array.isArray(data) ? data.filter(q => typeof q === 'string' && q.trim()).slice(0, 4) : [];
   if (!items.length) return null;
   return (
@@ -169,6 +178,7 @@ export function deltaClass(text: string, versusBrand: boolean): string {
 const PRIMARY_WHEN_NOTHING_LINKED = 5;
 
 export function SourcePills({ sources, content, caption }: { sources: SourceLink[]; content: string; caption?: string | null }) {
+  const rise = useRise();
   const [open, setOpen] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const byDomain = new Map<string, { answers: number | null; pct: number | null; pages: SourceLink[]; linked: boolean }>();

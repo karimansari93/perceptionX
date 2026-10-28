@@ -174,7 +174,7 @@ Deno.test('sentiment column is a badge coloured by band', () => {
 
 Deno.test('report actions: market filter, priority order, shape and section', () => {
   const rows = [
-    { organization_id: 'o', register: 'action', action_number: 5, title: 'Claim the local review profiles that doubled', timing: 'act_next', priority: 'high', priority_reason: 'Hungary holds 22% of the negative opinions and the profile is one claim away.', markets: ['Romania', 'Hungary'], problem: 'profession.hu reached 22% of Hungarian answers with no presence.', recommendation: 'Claim profession.hu and keep benefits current.', owner_name: 'Market HR', tracking_status: 'open', lifts: [{ metric: 'Sentiment', attribute: 'Compensation', market: 'Hungary' }], published_at: '2026-10-01' },
+    { id: 'act-5', organization_id: 'o', register: 'action', action_number: 5, title: 'Claim the local review profiles that doubled', timing: 'act_next', priority: 'high', priority_reason: 'Hungary holds 22% of the negative opinions and the profile is one claim away.', markets: ['Romania', 'Hungary'], problem: 'profession.hu reached 22% of Hungarian answers with no presence.', recommendation: 'Claim profession.hu and keep benefits current.', owner_name: 'Market HR', tracking_status: 'open', lifts: [{ metric: 'Sentiment', attribute: 'Compensation', market: 'Hungary' }], published_at: '2026-10-01' },
     { organization_id: 'o', register: 'action', action_number: 2, title: 'Germany only', timing: 'act_now', priority: 'high', markets: ['Germany'], recommendation: 'x', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
     { organization_id: 'o', register: 'action', action_number: 1, title: 'Everywhere', timing: null, priority: null, markets: [], recommendation: 'y', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
     { organization_id: 'o', register: 'action', action_number: 7, title: 'Labelled global', timing: 'act_later', priority: 'medium', markets: ['Global'], recommendation: 'g', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
@@ -211,6 +211,7 @@ Deno.test('report actions: market filter, priority order, shape and section', ()
   assertStringIncludes(html, 'href="https://profession.hu"');
   assert(!renderDigestHtml(payload, opts).includes('Your actions this quarter'));
   const md = digestMarkdown({ ...payload, actions: out });
+  assertStringIncludes(md, '[Claim the local review profiles that doubled](/dashboard/actions?action=act-5)');
   assertStringIncludes(md, '(high priority)');
   assert(!/act (now|next|later)/i.test(md));
 });

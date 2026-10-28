@@ -370,6 +370,7 @@ const priorityOf = (raw: unknown): 'high' | 'medium' | 'low' | null =>
 export function shapeAction(a: Record<string, any>): DigestActionRow {
   const lifts = Array.isArray(a.lifts) ? a.lifts : [];
   return {
+    id: a.id ? String(a.id) : '',
     number: a.action_number != null ? String(a.action_number).padStart(2, '0') : '',
     title: String(a.title || ''),
     priority: priorityOf(a.priority),
@@ -411,7 +412,7 @@ export function filterActions(rows: Record<string, any>[], markets: string[]): D
 async function reportActions(ctx: ToolContext, markets: string[]): Promise<DigestActionRow[]> {
   const { data, error } = await ctx.admin
     .from('company_actions')
-    .select('organization_id, register, title, cycle_raised, action_number, problem, recommendation, priority, priority_reason, lifts, owner_name, tracking_status, markets, published_at')
+    .select('id, organization_id, register, title, cycle_raised, action_number, problem, recommendation, priority, priority_reason, lifts, owner_name, tracking_status, markets, published_at')
     .eq('organization_id', ctx.organizationId)
     .not('published_at', 'is', null);
   if (error) { console.warn(`[digest] actions read failed: ${error.message}`); return []; }

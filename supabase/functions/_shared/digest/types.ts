@@ -62,6 +62,8 @@ export interface DigestNarrative {
 
 /** One action from the client's published report, scoped to this reader's markets. */
 export interface DigestActionRow {
+  /** company_actions.id, for the link to the action's card on the Actions tab. */
+  id: string;
   /** "05" as printed in the report, or "" for an action without a number. */
   number: string;
   title: string;
