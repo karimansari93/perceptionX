@@ -1058,7 +1058,7 @@ export const OverviewTab = memo(({
           question; the score row and everything else sit below it. The
           overview never scrolls: hero and score row are fixed height, the
           summary row takes the rest and its cards scroll internally. */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 lg:h-[264px] gap-4 w-full flex-shrink-0">
+      <div className="grid grid-cols-1 lg:grid-cols-3 lg:h-[284px] gap-4 w-full flex-shrink-0">
         <div className="lg:col-span-2">
           <AskAiHero companyName={companyName} market={market} jobFunction={selectedJobFunctionFilter} />
         </div>

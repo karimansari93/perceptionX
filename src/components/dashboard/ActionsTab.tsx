@@ -36,6 +36,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { cn } from '@/lib/utils';
 import { ActionsEmptyState } from './ActionsEmptyState';
+import { PriorityChip } from './PriorityChip';
 import { GENERAL_KEY, canonicalizeLocationContext, countryCodeFor, type LocationEntry } from '@/utils/locationContext';
 import {
   BOARD_COLUMNS, LANE_LABEL, STATUS_LABEL, typeLabel, buildBoard, cycleLabel, noteParts,
@@ -528,35 +529,6 @@ function ScopeChip({ action, className }: { action: CompanyAction; className?: s
     <span className={cn('inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-gray-500', className)}>
       <Icon className="h-3.5 w-3.5 text-gray-400" />{scope.kind === 'global' ? 'Global' : scope.market}
     </span>
-  );
-}
-
-// Soft tinted pills, no border: blue for High, slate for Medium, grey for
-// Low. One cool scale, so the chip reads as a label and not an alarm.
-const PRIORITY_STYLE: Record<Priority, string> = {
-  high: 'bg-blue-50 text-blue-700',
-  medium: 'bg-slate-100 text-slate-700',
-  low: 'bg-gray-100 text-gray-500',
-};
-
-// The priority label (High strong, Medium, Low) with the reason on hover.
-// Nothing for an unlabelled action.
-export function PriorityChip({ action, className }: { action: CompanyAction; className?: string }) {
-  const priority = priorityOf(action);
-  if (!priority) return null;
-  const chip = (
-    <span className={cn('inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold leading-4', PRIORITY_STYLE[priority], className)} aria-label={`${PRIORITY_LABEL[priority]} priority`}>
-      {PRIORITY_LABEL[priority]}
-    </span>
-  );
-  if (!action.priority_reason) return chip;
-  return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>{chip}</TooltipTrigger>
-        <TooltipContent side="top" className="max-w-xs text-xs leading-relaxed">{action.priority_reason}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
   );
 }
 
