@@ -53,13 +53,16 @@ export function ActionsSummaryCard({ markets }: { markets: string[] }) {
         ) : rows.length === 0 ? (
           <ActionsEmptyState caughtUp={actions.length > 0} />
         ) : (
-          <ul className="divide-y divide-gray-100">
+          // On desktop each row is a fifth of the card, so five fill it and
+          // fewer keep the same rhythm. Below lg the card has no set height,
+          // so rows pad instead.
+          <ul className="flex flex-col divide-y divide-gray-100 lg:h-full">
             {rows.map(({ action, mine: isMine }) => (
-              <li key={action.id}>
+              <li key={action.id} className="flex min-h-0 shrink-0 lg:basis-1/5">
                 <button
                   type="button"
                   onClick={() => navigate(`/dashboard/actions?action=${action.id}`)}
-                  className="flex w-full items-start gap-2.5 py-1 text-left hover:bg-gray-50"
+                  className="flex w-full items-center gap-2.5 py-2.5 text-left hover:bg-gray-50 lg:py-0"
                   title={[
                     typeLabel(action)?.label ?? null,
                     (() => { const sc = actionScope(action); return sc.kind === 'global' ? 'Global' : sc.market; })(),
@@ -67,19 +70,12 @@ export function ActionsSummaryCard({ markets }: { markets: string[] }) {
                   ].filter(Boolean).join(' · ')}
                 >
                   {isMine && action.work_status === 'in_progress'
-                    ? <CircleDot className="mt-[3px] h-3.5 w-3.5 shrink-0 text-amber-500" />
-                    : <CircleDashed className="mt-[3px] h-3.5 w-3.5 shrink-0 text-gray-400" />}
-                  {/* Title and priority on one line, the problem on a second
-                      clipped line; type, market and status show on hover. */}
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-2">
-                      <span className="line-clamp-1 min-w-0 flex-1 text-[13px] leading-5 text-gray-900">{displayTitle(action)}</span>
-                      <PriorityChip action={action} className="shrink-0" />
-                    </span>
-                    {action.problem && (
-                      <span className="block truncate text-xs leading-4 text-gray-500">{action.problem}</span>
-                    )}
-                  </span>
+                    ? <CircleDot className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                    : <CircleDashed className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
+                  {/* Title and priority on one line; type, market and status
+                      show on hover. */}
+                  <span className="line-clamp-1 min-w-0 flex-1 text-[13px] leading-5 text-gray-900">{displayTitle(action)}</span>
+                  <PriorityChip action={action} className="shrink-0" />
                 </button>
               </li>
             ))}
