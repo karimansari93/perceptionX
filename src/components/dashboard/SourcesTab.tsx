@@ -1296,7 +1296,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch" data-tour="sources-focus">
             {renderFocusCard({
               title: 'Top influence opportunities',
-              subtitle: `Sources AI leans on where ${companyName || 'your company'} is missing from most answers — ranked by citations without a mention.`,
+              subtitle: `Sources AI leans on where ${companyName || 'your company'} is missing from most answers.`,
               rows: focusCharts.opportunities,
               emptyText: `No influence gaps — ${companyName || 'your company'} appears in most answers across every cited source.`,
             })}

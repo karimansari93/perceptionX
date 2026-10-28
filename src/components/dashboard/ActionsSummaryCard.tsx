@@ -11,9 +11,9 @@ import { actionScope, displayTitle, pendingForUser, typeLabel, type CompanyActio
 import { Skeleton } from '@/components/ui/skeleton';
 import { ActionsEmptyState } from './ActionsEmptyState';
 
-// Fixed at three so the card never grows the Overview's top row; the header
+// Fixed at five so the card fits the Overview's top row height; the header
 // count and "View all" cover the rest.
-const MAX_ROWS = 3;
+const MAX_ROWS = 5;
 
 export function ActionsSummaryCard({ markets }: { markets: string[] }) {
   const navigate = useNavigate();
@@ -48,7 +48,7 @@ export function ActionsSummaryCard({ markets }: { markets: string[] }) {
 
       <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
         {query.isLoading ? (
-          <div className="space-y-2 pt-1">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
+          <div className="space-y-2 pt-1">{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
         ) : rows.length === 0 ? (
           <ActionsEmptyState caughtUp={actions.length > 0} />
         ) : (
@@ -63,7 +63,7 @@ export function ActionsSummaryCard({ markets }: { markets: string[] }) {
                   {isMine && action.work_status === 'in_progress'
                     ? <CircleDot className="h-3.5 w-3.5 shrink-0 text-amber-500" />
                     : <CircleDashed className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
-                  {/* One line per action so three fit beside the chat box; the
+                  {/* One line per action so five fit beside the chat box; the
                       type, market and status show on hover. */}
                   <span
                     className="line-clamp-1 min-w-0 flex-1 text-[13px] text-gray-900"
