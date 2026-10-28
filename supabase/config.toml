@@ -340,6 +340,10 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 [functions.mcp-server]
 verify_jwt = false
 
+# Resend's webhook cannot send a Supabase JWT; the function checks the Svix signature instead.
+[functions.resend-events]
+verify_jwt = false
+
 [functions.process-visibility-queue]
 verify_jwt = false
 
