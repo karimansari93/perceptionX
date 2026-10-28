@@ -32,7 +32,7 @@ Hard rules:
 - Each callout is one finding a reader could disagree with (title), then the figure, a comparison, and why it matters (body).
 - When payload.actions is not empty, those are the actions PerceptionX published in the client's report for this reader's markets. The action block then points at one of them: name it by title (and number when it has one), say what this quarter's figures say about it, and restate its what-to-do. Never propose a different action while the list is not empty, and the callouts may refer to a listed action by title when a figure bears on it.
 - When payload.actions is empty, the action names the attribute, the page or source AI reads most for it (from the payload or evidence), what that page says or does not say (from the evidence), and one concrete thing to publish. One recommendation, not a list.
-- Reply with JSON only, no code fences, matching exactly:
+- Reply by calling the write_update tool once with these fields (no prose outside the tool call):
 {"preheader": string, "callouts": [{"title": string, "body": string}], "functionsNote": string|null, "marketsNote": string|null, "action": string}
 - 3 or 4 callouts. preheader under ${LIMITS.preheader} characters. title under ${LIMITS.title}. body under ${LIMITS.body}. notes under ${LIMITS.note}. action under ${LIMITS.action}.
 - functionsNote is null when the payload has fewer than two job functions; marketsNote is null when it has fewer than two markets.`;
@@ -48,6 +48,35 @@ export const cap = (s: unknown, max: number) => {
   if (lastStop > max * 0.4) return head.slice(0, lastStop + 1);
   return head.replace(/\s+\S*$/, '').replace(/[,:;]$/, '') + '.';
 };
+
+// The model answers through a forced tool call, so the reply is structured
+// JSON from the API rather than text we have to parse. A text reply (older
+// models, or a refusal to use the tool) still goes through the text parser.
+const NARRATIVE_TOOL = {
+  name: 'write_update',
+  description: 'Write the prose blocks of the quarterly update email.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      preheader: { type: 'string' },
+      callouts: {
+        type: 'array',
+        items: { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' } }, required: ['title', 'body'] },
+      },
+      functionsNote: { type: ['string', 'null'] },
+      marketsNote: { type: ['string', 'null'] },
+      action: { type: 'string' },
+    },
+    required: ['preheader', 'callouts', 'functionsNote', 'marketsNote', 'action'],
+  },
+};
+
+/** The narrative object from a model reply: the tool call's input, else the first JSON object in its text. */
+export function narrativeFromReply(content: Array<{ type: string; name?: string; input?: unknown; text?: string }>): any {
+  const tool = content.find(b => b.type === 'tool_use' && b.name === NARRATIVE_TOOL.name);
+  if (tool && tool.input && typeof tool.input === 'object') return tool.input;
+  return parseJsonReply(content.filter(b => b.type === 'text').map(b => b.text || '').join(''));
+}
 
 function parseJsonReply(text: string): any {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
@@ -101,17 +130,27 @@ export async function writeNarrative(
 ): Promise<DigestNarrative> {
   const ev = await evidence(ctx, payload, companyId, locationKey).catch(err => `Evidence unavailable: ${err?.message || err}`);
   const user = `PAYLOAD (all figures already verified):\n${payloadForPrompt(payload)}\n\nEVIDENCE (themes and sources for the weakest attributes, from the analyst tools):\n${ev}\n\nWrite the JSON now.`;
-  const text = await withClaudeKey(async (apiKey) => {
+  const ask = (extra: string) => withClaudeKey(async (apiKey) => {
     const client = new Anthropic({ apiKey });
     const reply = await client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
       system: RULES,
-      messages: [{ role: 'user', content: user }],
+      tools: [NARRATIVE_TOOL as any],
+      tool_choice: { type: 'tool', name: NARRATIVE_TOOL.name },
+      messages: [{ role: 'user', content: user + extra }],
     });
-    return reply.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+    return reply.content as any[];
   });
-  return validateNarrative(parseJsonReply(text), payload);
+  try {
+    return validateNarrative(narrativeFromReply(await ask('')), payload);
+  } catch (err) {
+    // One retry: a malformed or incomplete reply is rare, and a second attempt
+    // with the failure named almost always lands. A second failure surfaces.
+    const why = err instanceof Error ? err.message : String(err);
+    console.warn(`[digest] narrative retry: ${why}`);
+    return validateNarrative(narrativeFromReply(await ask(`\n\nYour previous reply could not be used (${why}). Call write_update again with every field filled.`)), payload);
+  }
 }
 
 // A Markdown copy of the update for the pre-created chat thread: the same
