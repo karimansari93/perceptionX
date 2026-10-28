@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
 import { digestSubject, renderDigestHtml, sentimentBadge } from './template.ts';
 import { coverageRows, describeLocation, displayMarket, filterActions, groupRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
-import { cap, digestMarkdown, validateNarrative } from './narrative.ts';
+import { cap, digestMarkdown, narrativeFromReply, validateNarrative } from './narrative.ts';
 import type { DigestPayload } from './types.ts';
 
 const payload: DigestPayload = {
@@ -206,4 +206,13 @@ Deno.test('report actions: market filter, priority order, shape and section', ()
   const md = digestMarkdown({ ...payload, actions: out });
   assertStringIncludes(md, '(high priority)');
   assert(!/act (now|next|later)/i.test(md));
+});
+
+Deno.test('narrative comes from the tool call, with text JSON as the fallback', () => {
+  const input = { preheader: 'p', callouts: [{ title: 't', body: 'b' }], functionsNote: null, marketsNote: null, action: 'a' };
+  assertEquals(narrativeFromReply([{ type: 'text', text: 'Here you go' }, { type: 'tool_use', name: 'write_update', input }]), input);
+  assertEquals(narrativeFromReply([{ type: 'text', text: '```json\n{"preheader":"p","callouts":[],"functionsNote":null,"marketsNote":null,"action":"a"}\n```' }]).action, 'a');
+  let failed = false;
+  try { narrativeFromReply([{ type: 'text', text: '{"preheader": "He said "no" and left", "action": "a"}' }]); } catch { failed = true; }
+  assert(failed);
 });
