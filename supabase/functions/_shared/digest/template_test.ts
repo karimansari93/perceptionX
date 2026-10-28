@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
 import { digestSubject, renderDigestHtml, sentimentBadge } from './template.ts';
 import { coverageRows, describeLocation, displayMarket, filterActions, groupRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
-import { cap, digestMarkdown, narrativeFromReply, validateNarrative } from './narrative.ts';
+import { cap, capTitle, digestMarkdown, narrativeFromReply, validateNarrative } from './narrative.ts';
 import type { DigestPayload } from './types.ts';
 import { bandLabel } from '../px-tools/bands.ts';
 
@@ -259,4 +259,22 @@ Deno.test('the employers list is ordered by share, the client included', () => {
   assertEquals(rows.map(r => r.name), ['Audi', 'Bosch', 'Ford', 'Continental']);
   const html = renderDigestHtml({ ...payload, employers: rows }, opts);
   assert(html.indexOf('Bosch') < html.indexOf('Ford (You)') && html.indexOf('Ford (You)') < html.indexOf('Continental'));
+});
+
+Deno.test('a callout title over the limit ends at a clause break with no full stop, and is a reason to retry', () => {
+  assertEquals(capTitle('On the open employer questions, Ford is named in 31% of answers, behind the German carmakers', 80), 'On the open employer questions, Ford is named in 31% of answers');
+  assertEquals(capTitle('Application Communication is the weakest attribute, and reviews are writing the story', 80), 'Application Communication is the weakest attribute');
+  assertEquals(capTitle('Short title.', 80), 'Short title');
+  const raw = {
+    preheader: 'p', action: 'a',
+    callouts: [
+      { title: 'A title that is far too long for the limit because it keeps going and going and going on', body: 'b' },
+      { title: 'Fine', body: 'b' },
+    ],
+  };
+  let threw = '';
+  try { validateNarrative(raw, payload); } catch (e) { threw = (e as Error).message; }
+  assert(threw.includes('1 callout title'));
+  const lenient = validateNarrative(raw, payload, { lenient: true });
+  assert(lenient.callouts[0].title.length <= 80 && !lenient.callouts[0].title.endsWith('.'));
 });
