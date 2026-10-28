@@ -30,6 +30,7 @@ Deno.test('slack line: first open and first click only, bounces and complaints a
   assertEquals(slackText('complained', send, false), '🚫 m@ford.example (Ford) marked the Q3 2026 update as spam.');
   assertEquals(slackText('delivered', send, true), null);
   assertEquals(slackText('opened', { ...send, name: null }, true)?.startsWith('📬 m@ford.example (Ford, Germany)'), true);
+  assertEquals(slackText('opened', send, true, null, null, true), '📬 Manjola Tahiri (Ford, Germany) opened the Q3 2026 update (test send), 12 min after sending.');
 });
 
 Deno.test('links lose our campaign parameters and nothing else', () => {

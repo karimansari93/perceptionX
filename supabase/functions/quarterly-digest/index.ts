@@ -175,6 +175,14 @@ serve(async (req) => {
       if (!callerEmail) return json({ error: 'Your account has no email address' }, 400);
       const { payload, html, subject, conversationId } = await compose(admin, member, user.id);
       const resendId = await sendEmail(callerEmail, subject, html);
+      // Logged as a test so Resend's open and click events for it are matched
+      // and posted like a real send; the admin page's send list ignores tests.
+      const { error: logErr } = await admin.from('quarterly_digest_sends').insert({
+        organization_id: member.organizationId, member_id: member.memberId, user_id: user.id,
+        email: callerEmail, period: payload.period.quarter, subject, payload, resend_id: resendId,
+        conversation_id: conversationId, sent_by: user.id, status: 'test',
+      });
+      if (logErr) console.warn(`[digest] test send log failed: ${logErr.message}`);
       return json({ sentTo: callerEmail, subject, resendId, conversationId, period: payload.period.quarter });
     }
 
