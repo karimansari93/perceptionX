@@ -1,5 +1,6 @@
 // Actions tab with a labelled register: the priority chip on every card and
-// in the detail, High first in a column, the Global fix under a market, the
+// in the detail, High first in a column, only the market's own actions under
+// a market (the Global fix stays with the all-markets view), the
 // priority filter and the header note. The register's timing never shows.
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -59,25 +60,27 @@ describe('ActionsTab priority', () => {
   it('shows the chip on every labelled card, High first, with the note and no timing wording', async () => {
     const { container } = await mount(null);
     expect(screen.getByText('Priority is the expected effect on what AI tells candidates. When to act is your call.')).toBeInTheDocument();
-    // Global view: the Global action and the market-less one, High before unlabelled.
-    const suggested = screen.getByRole('region', { name: 'Suggested' });
-    expect(titles(suggested)).toEqual(['Publish how hiring works on postings and the FAQ.', 'Aardvark: an unlabelled action.']);
-    expect(within(suggested).getByLabelText('High priority')).toHaveTextContent('High');
-    expect(within(suggested).queryByLabelText('Low priority')).toBeNull();
-    expect(container.textContent).not.toMatch(/act (now|next|later)/i);
-    expect(screen.getByRole('combobox', { name: 'Priority' })).toHaveTextContent('All priorities');
-  });
-
-  it('under a market, For you shows that market plus Global, sorted High, Medium, unlabelled', async () => {
-    await mount('canada');
+    // All-markets view: every action is for you, High, Medium, Low, then unlabelled.
     const suggested = screen.getByRole('region', { name: 'Suggested' });
     expect(titles(suggested)).toEqual([
       'Publish how hiring works on postings and the FAQ.',
       'Replace the contact line.',
+      'Zeta: a Germany only action.',
       'Aardvark: an unlabelled action.',
     ]);
+    expect(within(suggested).getByLabelText('High priority')).toHaveTextContent('High');
+    expect(within(suggested).getByLabelText('Low priority')).toHaveTextContent('Low');
+    expect(container.textContent).not.toMatch(/act (now|next|later)/i);
+    expect(screen.getByRole('combobox', { name: 'Priority' })).toHaveTextContent('All priorities');
+  });
+
+  it('under a market, For you shows only that market; All adds the rest sorted High, Medium, Low, unlabelled', async () => {
+    await mount('canada');
+    const suggested = screen.getByRole('region', { name: 'Suggested' });
+    expect(titles(suggested)).toEqual(['Replace the contact line.']);
     expect(within(suggested).getByLabelText('Medium priority')).toHaveTextContent('Medium');
-    // "All" adds the Germany action, Low, after Medium.
+    expect(within(suggested).queryByLabelText('High priority')).toBeNull();
+    // "All" adds the Global, Germany and unlabelled actions.
     fireEvent.click(screen.getByRole('button', { name: 'All' }));
     expect(titles(screen.getByRole('region', { name: 'Suggested' }))).toEqual([
       'Publish how hiring works on postings and the FAQ.',
