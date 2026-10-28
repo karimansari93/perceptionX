@@ -239,7 +239,9 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     ? section('By job function', groupSub(''), groupTable(payload.byFunction, 'Function', payload.sentimentChangeHidden) + (n?.functionsNote ? spacer + p(prose(n.functionsNote), 13, BODY) : ''))
     : '';
 
-  const act = n?.action
+  // The AI-written focus box only stands in when the register has no actions
+  // for this reader; otherwise 'Your actions this quarter' is the plan.
+  const act = n?.action && !payload.actions.length
     ? `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="margin-top:20px;"><tbody><tr><td style="background:#FFF5F8;border:1px solid ${PINK};border-radius:10px;padding:16px;">` +
       p('Where to focus', 14, INK, 700, 'margin-bottom:4px;', '24px') + p(prose(n.action), 13, BODY) + '</td></tr></tbody></table>'
     : '';
@@ -288,6 +290,6 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     '</head><body dir="ltr" lang="en" style="background-color:#F4F5F7;padding:0;margin:0;">' + preheader +
     '<table border="0" width="100%" cellpadding="0" cellspacing="0" role="presentation" align="center"><tbody><tr><td style="background-color:#F4F5F7;padding:24px 0;">' +
     `<table align="center" width="100%" class="em-container" border="0" cellpadding="0" cellspacing="0" role="presentation" style="max-width:600px;background-color:#FFFFFF;border:1px solid ${LINE};border-radius:16px;margin:0 auto;"><tbody><tr style="width:100%"><td style="padding:32px;">` +
-    header + intro + scopeCard + changed + markets + functions + act + reportActions + peers + sources + themes + button + footer +
+    header + intro + scopeCard + changed + markets + functions + act + peers + sources + themes + reportActions + button + footer +
     '</td></tr></tbody></table></td></tr></tbody></table></body></html>';
 }

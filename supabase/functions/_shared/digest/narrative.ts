@@ -25,6 +25,7 @@ Hard rules:
 - Use only figures that appear in the payload. Never invent, estimate or round a figure differently. Quote percentages as "44%" and changes as "up 11 points" or "down 4 points".
 - Lead with coverage percentages (share of answers), never relative lifts.
 - The employers list is measured on the basis given in employersNote (usually the open "which employers" questions only). When you compare the client with those employers, say it is on those questions, and never compare the client's headline visibility with an employer's share.
+- Two different measures must never sit in one sentence, one callout or one contrast: the headline visibility (metrics.visibility, named anywhere in any answer) and the client's share in the employers list (named as an employer to consider on the open employer questions). Never write "visible but not considered", "known but not shortlisted" or any framing that sets the two against each other. A callout about the employers list uses only that list's figures, opens by naming the basis ("On the open employer questions, where candidates ask which employers to consider, AI names the client in 9% of answers"), compares with the employers on that list, and says what would put the client on more of those answers. The headline visibility belongs in its own callout, or in none.
 - Never name an AI assistant, model or vendor. Say "AI" or "AI assistants".
 - Never use an em dash or en dash. Use commas, full stops or colons.
 - Never mention raw counts of answers, responses, prompts or themes.
@@ -183,7 +184,7 @@ export function digestMarkdown(payload: DigestPayload): string {
     for (const r of payload.byFunction) lines.push(`- ${r.name}: ${r.positivePct ?? 'n/a'}% positive${payload.sentimentChangeHidden ? '' : d(r.sentimentDelta)}, named in ${r.namedPct ?? 'n/a'}% of answers`);
     if (n?.functionsNote) lines.push('', n.functionsNote);
   }
-  if (n?.action) lines.push('', '### Where to focus', n.action);
+  if (n?.action && !payload.actions.length) lines.push('', '### Where to focus', n.action);
   if (payload.actions.length) {
     lines.push('', '### Your actions this quarter');
     for (const a of payload.actions) lines.push(`- **${a.number ? `${a.number} ` : ''}${a.title}**${a.priority ? ` (${a.priority} priority)` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
