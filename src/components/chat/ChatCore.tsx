@@ -90,9 +90,12 @@ export function ChatCore({ initialQuestion, initialScope, initialFiles, handover
 
   // Scrolling, the way chat apps do it: a question you just sent is pinned
   // to the top of the thread and the answer grows below it without moving
-  // the viewport; an opened thread starts at its end. Nothing follows the
-  // stream. The spacer under the last turn is what lets a short question
-  // reach the top.
+  // the viewport; an opened conversation starts at its end. A thread that
+  // opens with PerceptionX's own message (the quarterly update, reached from
+  // the email's button) is something to read from the top, so it starts
+  // there. Nothing follows the stream. The spacer under the last turn is
+  // what lets a short question reach the top.
+  const threadRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastUserRef = useRef<HTMLDivElement>(null);
   const lastUserIdx = useMemo(() => messages.map(m => m.role).lastIndexOf('user'), [messages]);
@@ -106,7 +109,11 @@ export function ChatCore({ initialQuestion, initialScope, initialFiles, handover
       requestAnimationFrame(() => lastUserRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
     } else if (messages.length > 0 && prev.count === 0) {
       setJustAsked(false);
-      messagesEndRef.current?.scrollIntoView({ block: 'end' });
+      if (messages[0].role === 'assistant') {
+        if (threadRef.current) threadRef.current.scrollTop = 0;
+      } else {
+        messagesEndRef.current?.scrollIntoView({ block: 'end' });
+      }
     }
     prevRef.current = { count: messages.length, lastUserIdx };
   }, [messages.length, lastUserIdx]);
@@ -226,7 +233,7 @@ export function ChatCore({ initialQuestion, initialScope, initialFiles, handover
       </div>
 
       {/* Messages */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={threadRef} className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-[760px] flex-col gap-6 px-8 pb-6 pt-6">
           {messages.map((msg, i) => (
             <div key={msg.id ?? i} ref={i === lastUserIdx ? lastUserRef : undefined} className="scroll-mt-6">

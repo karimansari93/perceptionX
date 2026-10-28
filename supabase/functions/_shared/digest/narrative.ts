@@ -201,7 +201,12 @@ export function digestMarkdown(payload: DigestPayload): string {
   if (n?.action && !payload.actions.length) lines.push('', '### Where to focus', n.action);
   if (payload.actions.length) {
     lines.push('', '### Your actions this quarter');
-    for (const a of payload.actions) lines.push(`- **${a.number ? `${a.number} ` : ''}${a.title}**${a.priority ? ` (${a.priority} priority)` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
+    // Each title links to the action's card on the Actions tab (an in-app path;
+    // the chat renders it as in-app navigation).
+    for (const a of payload.actions) {
+      const title = a.id ? `[${a.title}](/dashboard/actions?action=${a.id})` : a.title;
+      lines.push(`- **${a.number ? `${a.number} ` : ''}${title}**${a.priority ? ` (${a.priority} priority)` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
+    }
   }
   if (payload.employers.length) {
     lines.push('', '### Employers AI names alongside you');

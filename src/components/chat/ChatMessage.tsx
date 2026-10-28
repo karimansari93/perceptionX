@@ -1,4 +1,6 @@
 import { Children, createContext, isValidElement, useContext, useMemo, useRef } from 'react';
+import { Link, useInRouterContext } from 'react-router-dom';
+import { ArrowRight } from 'lucide-react';
 import * as HoverCardPrimitive from '@radix-ui/react-hover-card';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -9,7 +11,7 @@ import { competitorDomain } from '@/utils/citationUtils';
 import type { ChatMessage as ChatMessageType } from '@/services/chatService';
 import { AttachmentChip } from './ChatAttachments';
 import {
-  BlockSkeleton, ContributionBars, FollowUps, PX_BLOCK, SourcePills, StatTiles,
+  BlockSkeleton, ContributionBars, FollowUps, PX_BLOCK, SourcePills, StatTiles, StreamingContext,
   deltaClass, extractContext, isDeltaText, parseBlock,
 } from './AnswerBlocks';
 
@@ -165,16 +167,35 @@ function LogoChip({ domain, label, children }: { domain: string; label: string; 
   );
 }
 const CompetitorChip = ({ name }: { name: string }) => <LogoChip domain={competitorDomain(name)} label={name}>{name}</LogoChip>;
+
+// A link into the app itself (for example an action's card on the Actions
+// tab): in-app navigation when a router is around, a plain link otherwise.
+function AppLink({ href, children }: { href: string; children: React.ReactNode }) {
+  const inRouter = useInRouterContext();
+  const cls = 'inline-flex items-center gap-0.5 font-medium text-[#13274F] underline decoration-[#0DBCBA]/60 underline-offset-2 hover:decoration-[#0DBCBA]';
+  const body = <>{children}<ArrowRight className="h-3.5 w-3.5 flex-none" aria-hidden="true" /></>;
+  return inRouter ? <Link to={href} className={cls}>{body}</Link> : <a href={href} className={cls}>{body}</a>;
+}
 const DomainChip = ({ domain, children }: { domain: string; children: React.ReactNode }) => <LogoChip domain={domain} label={domain}>{children}</LogoChip>;
 
 // A fenced px-* block → card. While the block streams, its JSON parses on
 // some chunks and not on others; the card keeps the last parse that worked
 // instead of blinking to a skeleton, which only shows before the first one.
+// The card can also remount mid-stream (its position in the markdown tree
+// shifts as the text before it settles), so the last good parse is kept
+// outside the component too, keyed by how the block starts.
+const lastGoodByBlock = new Map<string, unknown>();
+const blockKey = (lang: string, raw: string) => `${lang}:${raw.slice(0, 160)}`;
 function PxBlock({ lang, raw, onAsk }: { lang: string; raw: string; onAsk?: (q: string) => void }) {
   const parsed = parseBlock(lang, raw);
   const lastGood = useRef<unknown>(null);
-  if (parsed !== null) lastGood.current = parsed;
-  const data = parsed ?? lastGood.current;
+  const key = blockKey(lang, raw);
+  if (parsed !== null) {
+    lastGood.current = parsed;
+    if (lastGoodByBlock.size > 200) lastGoodByBlock.clear();
+    lastGoodByBlock.set(key, parsed);
+  }
+  const data = parsed ?? lastGood.current ?? lastGoodByBlock.get(key) ?? null;
   if (data === null) return <BlockSkeleton />;
   if (lang === 'stats') return <StatTiles data={data} />;
   if (lang === 'bars') return <ContributionBars data={data} />;
@@ -191,6 +212,7 @@ function buildComponents(onAsk?: (q: string) => void): Components {
       if (typeof href === 'string' && href.startsWith(DOMAIN_SCHEME)) {
         return <DomainChip domain={decodeURIComponent(href.slice(DOMAIN_SCHEME.length))}>{children}</DomainChip>;
       }
+      if (typeof href === 'string' && href.startsWith('/')) return <AppLink href={href}>{children}</AppLink>;
       return isHttpUrl(href) ? <SourceLinkInline href={href}>{children}</SourceLinkInline> : <span>{children}</span>;
     },
     p: ({ children }) => <p className="text-[15px] leading-[1.65] text-[#13274F] [text-wrap:pretty]">{children}</p>,
@@ -363,9 +385,11 @@ export function ChatMessage({ message, onAsk }: ChatMessageProps) {
         ) : (
           <>
             <div className="chat-message-content flex flex-col gap-4 break-words">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={urlTransform}>
-                {decorated}
-              </ReactMarkdown>
+              <StreamingContext.Provider value={!!message.isStreaming}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={urlTransform}>
+                  {decorated}
+                </ReactMarkdown>
+              </StreamingContext.Provider>
             </div>
             {working && (
               <div className="text-xs text-gray-500">Thinking…</div>
