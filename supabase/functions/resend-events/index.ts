@@ -40,7 +40,7 @@ serve(async (req) => {
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const { data: send } = await admin
     .from('quarterly_digest_sends')
-    .select('id, organization_id, user_id, email, period, payload, created_at, organizations(name)')
+    .select('id, organization_id, user_id, email, period, payload, status, created_at, organizations(name)')
     .eq('resend_id', emailId)
     .maybeSingle();
   if (!send) return json({ ok: true, ignored: 'not a quarterly update' });
@@ -65,7 +65,7 @@ serve(async (req) => {
   // Keep the send's status at the furthest step reached.
   const RANK: Record<string, number> = { sent: 0, delayed: 0, delivered: 1, opened: 2, clicked: 3, bounced: 4, complained: 4 };
   const { data: cur } = await admin.from('quarterly_digest_sends').select('status').eq('id', send.id).maybeSingle();
-  if ((RANK[type] ?? 0) > (RANK[String(cur?.status || 'sent')] ?? 0)) {
+  if (cur?.status !== 'test' && (RANK[type] ?? 0) > (RANK[String(cur?.status || 'sent')] ?? 0)) {
     await admin.from('quarterly_digest_sends').update({ status: type }).eq('id', send.id);
   }
 
@@ -83,7 +83,7 @@ serve(async (req) => {
     org: (send as any).organizations?.name || 'Unknown organisation',
     period: send.period, scope: String((send.payload as any)?.scope?.locationLabel || 'all markets'),
     created_at: send.created_at,
-  }, firstOfKind, link, event.data?.bounce?.message || null);
+  }, firstOfKind, link, event.data?.bounce?.message || null, send.status === 'test');
 
   if (webhook && text) {
     try {

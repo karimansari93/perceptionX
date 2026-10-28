@@ -41,6 +41,16 @@ Hard rules:
 const stripDashes = (s: string) => s.replace(/\s*[—–]\s*/g, ', ').replace(/, ,/g, ',');
 // Over-length text is cut at the end of a sentence, never mid-sentence; a
 // single sentence that is still too long is cut at a word with a full stop.
+export const capTitle = (s: unknown, max: number) => {
+  const t = stripDashes(String(s ?? '').trim()).replace(/[.]+$/, '');
+  if (t.length <= max) return t;
+  const head = t.slice(0, max);
+  const breaks = [', ', ': ', '; ', ' and ', ' but ', ' while ', ' so '].map(b => head.lastIndexOf(b));
+  const cut = Math.max(...breaks);
+  const kept = cut > max * 0.4 ? head.slice(0, cut) : head.replace(/\s+\S*$/, '');
+  return kept.replace(/[,:;]$/, '').trim();
+};
+
 export const cap = (s: unknown, max: number) => {
   const t = stripDashes(String(s ?? '').trim());
   if (t.length <= max) return t;
@@ -87,17 +97,21 @@ function parseJsonReply(text: string): any {
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-export function validateNarrative(raw: any, payload: DigestPayload): DigestNarrative {
+export function validateNarrative(raw: any, payload: DigestPayload, opts: { lenient?: boolean } = {}): DigestNarrative {
   const callouts = Array.isArray(raw?.callouts) ? raw.callouts : [];
   const out: DigestNarrative = {
     preheader: cap(raw?.preheader, LIMITS.preheader),
-    callouts: callouts.slice(0, 4).map((c: any) => ({ title: cap(c?.title, LIMITS.title), body: cap(c?.body, LIMITS.body) }))
+    callouts: callouts.slice(0, 4).map((c: any) => ({ title: capTitle(c?.title, LIMITS.title), body: cap(c?.body, LIMITS.body) }))
       .filter((c: { title: string; body: string }) => c.title && c.body),
     functionsNote: payload.byFunction.length > 1 && raw?.functionsNote ? cap(raw.functionsNote, LIMITS.note) : null,
     marketsNote: payload.byMarket.length > 1 && raw?.marketsNote ? cap(raw.marketsNote, LIMITS.note) : null,
     action: cap(raw?.action, LIMITS.action),
   };
   if (!out.preheader || !out.action || out.callouts.length < 2) throw new Error('Narrative reply was incomplete.');
+  const longTitles = callouts.filter((c: any) => String(c?.title ?? '').trim().length > LIMITS.title).length;
+  if (longTitles && !opts.lenient) {
+    throw new Error(`${longTitles} callout title(s) ran past ${LIMITS.title} characters; a title is one short headline, not a sentence`);
+  }
   return out;
 }
 
@@ -150,7 +164,7 @@ export async function writeNarrative(
     // with the failure named almost always lands. A second failure surfaces.
     const why = err instanceof Error ? err.message : String(err);
     console.warn(`[digest] narrative retry: ${why}`);
-    return validateNarrative(narrativeFromReply(await ask(`\n\nYour previous reply could not be used (${why}). Call write_update again with every field filled.`)), payload);
+    return validateNarrative(narrativeFromReply(await ask(`\n\nYour previous reply could not be used (${why}). Call write_update again with every field filled and within the limits.`)), payload, { lenient: true });
   }
 }
 
@@ -187,7 +201,12 @@ export function digestMarkdown(payload: DigestPayload): string {
   if (n?.action && !payload.actions.length) lines.push('', '### Where to focus', n.action);
   if (payload.actions.length) {
     lines.push('', '### Your actions this quarter');
-    for (const a of payload.actions) lines.push(`- **${a.number ? `${a.number} ` : ''}${a.title}**${a.priority ? ` (${a.priority} priority)` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
+    // Each title links to the action's card on the Actions tab (an in-app path;
+    // the chat renders it as in-app navigation).
+    for (const a of payload.actions) {
+      const title = a.id ? `[${a.title}](/dashboard/actions?action=${a.id})` : a.title;
+      lines.push(`- **${a.number ? `${a.number} ` : ''}${title}**${a.priority ? ` (${a.priority} priority)` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
+    }
   }
   if (payload.employers.length) {
     lines.push('', '### Employers AI names alongside you');

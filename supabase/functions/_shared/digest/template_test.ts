@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
 import { digestSubject, renderDigestHtml, sentimentBadge } from './template.ts';
 import { coverageRows, describeLocation, displayMarket, filterActions, groupRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
-import { cap, digestMarkdown, narrativeFromReply, validateNarrative } from './narrative.ts';
+import { cap, capTitle, digestMarkdown, narrativeFromReply, validateNarrative } from './narrative.ts';
 import type { DigestPayload } from './types.ts';
 import { bandLabel } from '../px-tools/bands.ts';
 
@@ -174,7 +174,7 @@ Deno.test('sentiment column is a badge coloured by band', () => {
 
 Deno.test('report actions: market filter, priority order, shape and section', () => {
   const rows = [
-    { organization_id: 'o', register: 'action', action_number: 5, title: 'Claim the local review profiles that doubled', timing: 'act_next', priority: 'high', priority_reason: 'Hungary holds 22% of the negative opinions and the profile is one claim away.', markets: ['Romania', 'Hungary'], problem: 'profession.hu reached 22% of Hungarian answers with no presence.', recommendation: 'Claim profession.hu and keep benefits current.', owner_name: 'Market HR', tracking_status: 'open', lifts: [{ metric: 'Sentiment', attribute: 'Compensation', market: 'Hungary' }], published_at: '2026-10-01' },
+    { id: 'act-5', organization_id: 'o', register: 'action', action_number: 5, title: 'Claim the local review profiles that doubled', timing: 'act_next', priority: 'high', priority_reason: 'Hungary holds 22% of the negative opinions and the profile is one claim away.', markets: ['Romania', 'Hungary'], problem: 'profession.hu reached 22% of Hungarian answers with no presence.', recommendation: 'Claim profession.hu and keep benefits current.', owner_name: 'Market HR', tracking_status: 'open', lifts: [{ metric: 'Sentiment', attribute: 'Compensation', market: 'Hungary' }], published_at: '2026-10-01' },
     { organization_id: 'o', register: 'action', action_number: 2, title: 'Germany only', timing: 'act_now', priority: 'high', markets: ['Germany'], recommendation: 'x', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
     { organization_id: 'o', register: 'action', action_number: 1, title: 'Everywhere', timing: null, priority: null, markets: [], recommendation: 'y', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
     { organization_id: 'o', register: 'action', action_number: 7, title: 'Labelled global', timing: 'act_later', priority: 'medium', markets: ['Global'], recommendation: 'g', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
@@ -211,6 +211,7 @@ Deno.test('report actions: market filter, priority order, shape and section', ()
   assertStringIncludes(html, 'href="https://profession.hu"');
   assert(!renderDigestHtml(payload, opts).includes('Your actions this quarter'));
   const md = digestMarkdown({ ...payload, actions: out });
+  assertStringIncludes(md, '[Claim the local review profiles that doubled](/dashboard/actions?action=act-5)');
   assertStringIncludes(md, '(high priority)');
   assert(!/act (now|next|later)/i.test(md));
 });
@@ -247,4 +248,34 @@ Deno.test('our own links carry campaign parameters for the quarter; source links
   assertStringIncludes(html, `href="https://app.perceptionx.ai/account?${utm}"`);
   assertStringIncludes(html, `href="https://perceptionx.ai?${utm}"`);
   assert(!html.includes('linkedin.com?utm') && !html.includes('linkedin.com/?utm'));
+});
+
+Deno.test('the employers list is ordered by share, the client included', () => {
+  const rows = [
+    { domain: 'audi.com', name: 'Audi', pct: 79, delta: -2 },
+    { domain: 'bosch.com', name: 'Bosch', pct: 39, delta: -7 },
+    { domain: 'continental.com', name: 'Continental', pct: 28, delta: 10 },
+    { domain: 'ford.com', name: 'Ford', pct: 31, delta: 3, you: true },
+  ].sort((a, b) => b.pct - a.pct);
+  assertEquals(rows.map(r => r.name), ['Audi', 'Bosch', 'Ford', 'Continental']);
+  const html = renderDigestHtml({ ...payload, employers: rows }, opts);
+  assert(html.indexOf('Bosch') < html.indexOf('Ford (You)') && html.indexOf('Ford (You)') < html.indexOf('Continental'));
+});
+
+Deno.test('a callout title over the limit ends at a clause break with no full stop, and is a reason to retry', () => {
+  assertEquals(capTitle('On the open employer questions, Ford is named in 31% of answers, behind the German carmakers', 80), 'On the open employer questions, Ford is named in 31% of answers');
+  assertEquals(capTitle('Application Communication is the weakest attribute, and reviews are writing the story', 80), 'Application Communication is the weakest attribute');
+  assertEquals(capTitle('Short title.', 80), 'Short title');
+  const raw = {
+    preheader: 'p', action: 'a',
+    callouts: [
+      { title: 'A title that is far too long for the limit because it keeps going and going and going on', body: 'b' },
+      { title: 'Fine', body: 'b' },
+    ],
+  };
+  let threw = '';
+  try { validateNarrative(raw, payload); } catch (e) { threw = (e as Error).message; }
+  assert(threw.includes('1 callout title'));
+  const lenient = validateNarrative(raw, payload, { lenient: true });
+  assert(lenient.callouts[0].title.length <= 80 && !lenient.callouts[0].title.endsWith('.'));
 });

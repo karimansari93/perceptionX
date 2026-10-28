@@ -53,10 +53,10 @@ const sinceText = (iso: string) => {
 // The Slack line for an event, or null when it is not worth posting.
 export function slackText(
   type: string, send: { email: string; name: string | null; org: string; period: string; scope: string; created_at: string },
-  firstOfKind: boolean, link?: string | null, bounce?: string | null,
+  firstOfKind: boolean, link?: string | null, bounce?: string | null, test = false,
 ): string | null {
   const who = `${send.name || send.email} (${send.org}, ${send.scope})`;
-  const what = `the ${send.period} update`;
+  const what = `the ${send.period} update${test ? ' (test send)' : ''}`;
   switch (type) {
     case 'opened': return firstOfKind ? `📬 ${who} opened ${what}, ${sinceText(send.created_at)}.` : null;
     case 'clicked': return firstOfKind ? `🔗 ${who} clicked through from ${what}${link ? ` to ${link}` : ''}, ${sinceText(send.created_at)}.` : null;
