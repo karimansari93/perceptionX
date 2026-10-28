@@ -316,6 +316,8 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
       pct: youPct, delta: youPrev === null ? null : pointsDelta(youPct, youPrev), you: true,
     });
   }
+  // The client sits where its share puts it, not at the bottom.
+  employers.sort((a, b) => b.pct - a.pct);
   const employersNote = onDiscovery
     ? 'Share of answers to open employer questions (candidates asking which employers to consider) that name each employer'
     : 'Share of all answers that mention each employer';

@@ -248,3 +248,15 @@ Deno.test('our own links carry campaign parameters for the quarter; source links
   assertStringIncludes(html, `href="https://perceptionx.ai?${utm}"`);
   assert(!html.includes('linkedin.com?utm') && !html.includes('linkedin.com/?utm'));
 });
+
+Deno.test('the employers list is ordered by share, the client included', () => {
+  const rows = [
+    { domain: 'audi.com', name: 'Audi', pct: 79, delta: -2 },
+    { domain: 'bosch.com', name: 'Bosch', pct: 39, delta: -7 },
+    { domain: 'continental.com', name: 'Continental', pct: 28, delta: 10 },
+    { domain: 'ford.com', name: 'Ford', pct: 31, delta: 3, you: true },
+  ].sort((a, b) => b.pct - a.pct);
+  assertEquals(rows.map(r => r.name), ['Audi', 'Bosch', 'Ford', 'Continental']);
+  const html = renderDigestHtml({ ...payload, employers: rows }, opts);
+  assert(html.indexOf('Bosch') < html.indexOf('Ford (You)') && html.indexOf('Ford (You)') < html.indexOf('Continental'));
+});
