@@ -177,14 +177,13 @@ export const isWatch = (a: Pick<CompanyAction, 'register'>) => a.register === 'w
 export const isDismissed = (a: Pick<CompanyAction, 'work_status'>) => a.work_status === 'dismissed';
 
 // Same rule as the quarterly email's filterActions: an action matches when
-// any of its markets equals a wanted market (case-insensitive), or it has no
-// markets (organisation-wide). "Global" is also treated as organisation-wide.
+// any of its own markets equals a wanted market (case-insensitive). "Global"
+// and empty markets are the global team's, so they never match a market.
 // No wanted markets = no filter.
 export function matchesMarkets(actionMarkets: string[] | null | undefined, wanted: string[]): boolean {
   const want = new Set(wanted.map(norm).filter(Boolean));
   if (!want.size) return true;
   const mine = (actionMarkets || []).map(norm).filter(Boolean);
-  if (!mine.length || mine.some((m) => ORG_WIDE.has(m))) return true;
   return mine.some((m) => want.has(m));
 }
 
@@ -220,12 +219,13 @@ export function actionScope(a: Pick<CompanyAction, 'markets'>): { kind: 'market'
     : { kind: 'global' };
 }
 
-// "For you": a market team sees the actions for its own market plus the
-// organisation-wide ones (no market, or "Global"), since a global action
-// applies in every market; with no market selected (the global view) only
-// the global actions. "All" shows everything.
+// "For you" matches the quarterly email: a market team sees only the actions
+// whose markets include its own; the global actions (no market, or "Global")
+// belong to the global team. With no market selected (the all-markets view)
+// everything is for you, since that view is the whole organisation. "All"
+// shows everything.
 export function isForYou(a: Pick<CompanyAction, 'markets'>, markets: string[]): boolean {
-  if (!markets.length) return actionScope(a).kind === 'global';
+  if (!markets.length) return true;
   return matchesMarkets(a.markets, markets);
 }
 

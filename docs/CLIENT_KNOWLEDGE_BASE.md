@@ -12,7 +12,7 @@ product can read it. Three tables, all keyed by `organization_id`:
 Who reads them:
 
 - **Ask AI** through the `get_report_actions` tool (`supabase/functions/_shared/px-tools/executors-report.ts`).
-- **The quarterly update email** through `supabase/functions/_shared/digest/payload.ts`: the open actions whose markets overlap the reader's view (plus organisation-wide ones) appear under "Your actions this quarter", and the AI-written "Where to focus" box must point at one of them.
+- **The quarterly update email** through `supabase/functions/_shared/digest/payload.ts`: the open actions whose markets include the reader's market appear under "Your actions this quarter"; a reader with no market (the global team) gets every open action. The dashboard's "For you" filter uses the same rule.
 - **The dashboard** action register.
 
 If an action is not in `company_actions`, none of these can see it. An

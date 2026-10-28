@@ -16,9 +16,10 @@ describe('matchesMarkets', () => {
     expect(matchesMarkets(['Germany', 'United States'], ['germany'])).toBe(true);
     expect(matchesMarkets(['Singapore'], ['Germany'])).toBe(false);
   });
-  it('treats empty and Global markets as organisation-wide', () => {
-    expect(matchesMarkets([], ['India'])).toBe(true);
-    expect(matchesMarkets(['Global', 'United States'], ['India'])).toBe(true);
+  it('never matches empty or Global markets to a market, as the email does', () => {
+    expect(matchesMarkets([], ['India'])).toBe(false);
+    expect(matchesMarkets(['Global', 'United States'], ['India'])).toBe(false);
+    expect(matchesMarkets(['Global', 'United States'], ['United States'])).toBe(true);
   });
   it('does not filter when no market is wanted', () => {
     expect(matchesMarkets(['Singapore'], [])).toBe(true);
@@ -129,7 +130,7 @@ describe('pendingForUser', () => {
     ];
     const { mine, suggested } = pendingForUser(rows, 'me', ['India']);
     expect(mine.map((r) => r.id)).toEqual(['mine-wip', 'mine-open']);
-    expect(suggested.map((r) => r.id)).toEqual(['global', 'india']);
+    expect(suggested.map((r) => r.id)).toEqual(['india']);
   });
 });
 
@@ -207,7 +208,7 @@ describe('actionScope', () => {
     expect(actionScope({ markets: ['United States', 'Global'] })).toEqual({ kind: 'global' });
   });
 
-  it('For you is the market\'s own actions plus the global ones, or only global ones in the global view', () => {
+  it('For you is the market\'s own actions only, or everything in the all-markets view, as in the email', () => {
     const rows = [
       action({ id: 'global', markets: [], title: '1' }),
       action({ id: 'labelled-global', markets: ['Global'], title: '2' }),
@@ -216,12 +217,13 @@ describe('actionScope', () => {
       action({ id: 'in', markets: ['India'], title: '5' }),
     ];
     const ids = (forYou: boolean, markets: string[]) => buildBoard(rows, { forYou, markets }).columns.open.map((r) => r.id);
-    expect(ids(true, ['Hungary'])).toEqual(['global', 'labelled-global', 'ro-hu', 'hu']);
-    expect(ids(true, ['Germany', 'Hungary'])).toEqual(['global', 'labelled-global', 'ro-hu', 'hu']);
-    expect(ids(true, [])).toEqual(['global', 'labelled-global', 'ro-hu']);
+    expect(ids(true, ['Hungary'])).toEqual(['ro-hu', 'hu']);
+    expect(ids(true, ['Germany', 'Hungary'])).toEqual(['ro-hu', 'hu']);
+    expect(ids(true, [])).toEqual(['global', 'labelled-global', 'ro-hu', 'hu', 'in']);
     expect(ids(false, ['Hungary'])).toEqual(['global', 'labelled-global', 'ro-hu', 'hu', 'in']);
     expect(isForYou({ markets: ['hungary'] }, ['Hungary'])).toBe(true);
-    expect(isForYou({ markets: ['Global'] }, ['Canada'])).toBe(true);
+    expect(isForYou({ markets: ['Global'] }, ['Canada'])).toBe(false);
+    expect(isForYou({ markets: ['Global'] }, [])).toBe(true);
     expect(isForYou({ markets: ['India'] }, ['Canada'])).toBe(false);
   });
 });

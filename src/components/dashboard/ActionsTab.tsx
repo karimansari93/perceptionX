@@ -7,9 +7,9 @@
 //
 // Visibility: everyone in the organisation sees every action in its register
 // (RLS scopes rows to the viewer's organisation). The default "For you" view
-// shows the actions for the header's market only (it lands on the user's
-// saved location), or only the global actions when no market is selected,
-// plus anything they own; "All" shows everything.
+// matches the quarterly email: the actions for the header's market only (it
+// lands on the user's saved location), or everything when no market is
+// selected, plus anything they own; "All" shows everything.
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MapPin, XCircle, ArrowRight, ArrowRightLeft, ArrowUpRight, Award, BadgeCheck, Briefcase, Globe, Linkedin, Youtube, Check, ChevronDown, ChevronRight, Lightbulb, ListChecks, CircleDashed, CircleDot, CheckCircle2, Eye, FileText, Lock, Megaphone, MessagesSquare, RotateCcw, Send, Star, User, UserPlus, type LucideIcon } from 'lucide-react';
@@ -400,7 +400,7 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
           )}
           {total === 0 && priority === 'all' && scope === 'for_you' && (
             <p className="text-sm text-gray-500">
-              {myMarket ? `No actions for ${myMarket.label} right now.` : 'No global actions right now.'}{' '}
+              {myMarket ? `No actions for ${myMarket.label} right now.` : 'No actions right now.'}{' '}
               <button type="button" className="underline" onClick={() => setScope('all')}>Show all</button>
             </p>
           )}
