@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { bandLabel } from '@/lib/scoreBands';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -2713,11 +2714,7 @@ export const useDashboardData = () => {
         (relevanceScore * 0.2)
       );
 
-      let perceptionLabel = 'Poor';
-      if (perceptionScore >= 80) perceptionLabel = 'Excellent';
-      else if (perceptionScore >= 65) perceptionLabel = 'Good';
-      else if (perceptionScore >= 50) perceptionLabel = 'Fair';
-      else if (perceptionScore >= 30) perceptionLabel = 'Poor';
+      const perceptionLabel = bandLabel('eps', perceptionScore) ?? 'Needs improvement';
 
       return { score: perceptionScore, label: perceptionLabel, sentimentScore, visibilityScore, relevanceScore };
     };
@@ -2875,11 +2872,7 @@ export const useDashboardData = () => {
       const perceptionScore = Math.round(
         (sentimentScore * 0.5) + (visibilityScore * 0.3) + (relevanceScore * 0.2)
       );
-      let perceptionLabel = 'Poor';
-      if (perceptionScore >= 80) perceptionLabel = 'Excellent';
-      else if (perceptionScore >= 65) perceptionLabel = 'Good';
-      else if (perceptionScore >= 50) perceptionLabel = 'Fair';
-      else if (perceptionScore >= 30) perceptionLabel = 'Poor';
+      const perceptionLabel = bandLabel('eps', perceptionScore) ?? 'Needs improvement';
 
       result[fn] = { perceptionScore, perceptionLabel, sentimentScore, visibilityScore, relevanceScore };
     });

@@ -21,6 +21,7 @@
 // get_responses / search_responses stay as bounded raw reads (they return
 // answer texts, newest first) — periods on those are bare quarter labels.
 
+import { bandLabel } from './bands.ts';
 import {
   buildMeta, coverageFound, coverageNoData, coveragePartial, EXCLUDED_AI_MODELS_FILTER, CLAUDE_PUBLISHED_OR,
   extractSnippet, labelQuarter, METHODOLOGY_NOTES, monthToQuarter, pct, pointsDelta,
@@ -147,7 +148,7 @@ interface ScoredQuarter {
   };
 }
 
-const epsLabel = (eps: number) => eps >= 80 ? 'Excellent' : eps >= 65 ? 'Good' : eps >= 50 ? 'Fair' : 'Poor';
+const epsLabel = (eps: number) => bandLabel('eps', eps) ?? '';
 
 // One scorecard per measured quarter in the window, ascending. Mirrors the
 // dashboard: visibility = mentioned/total, sentiment = pos/(pos+neg),

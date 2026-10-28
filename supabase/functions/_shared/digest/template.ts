@@ -77,13 +77,19 @@ function attributeLabel(row: DigestAttributeRow, appUrl: string): string {
     `<img alt="" width="14" height="14" src="${appUrl}/email/attributes/${row.attributeId}.png" style="display:inline-block;vertical-align:middle;border:0;"></span>${escapeHtml(row.name)}`;
 }
 
-function metricCard(label: string, value: string, sub: string, grade?: string): string {
-  const g = grade
-    ? ` <span style="${F}font-size:11px;font-weight:700;color:#fff;background:${PINK};padding:2px 7px;border-radius:999px;vertical-align:middle;position:relative;top:-3px;">${grade}</span>`
-    : '';
-  return `<div class="em-metric-card" style="background-color:#FFFFFF;border-radius:10px;border:1px solid ${LINE};box-sizing:border-box;height:118px;padding:14px 16px;">` +
+// Band badge on a metric card: the colour says the level before the word does.
+const BAND_COLORS: Record<string, [string, string]> = {
+  'Excellent': [UPBG, UPFG], 'Strong': ['#E6FAF9', '#0E8F8C'], 'Fair': ['#FFF7E6', '#B45309'], 'Needs improvement': [DNBG, DNFG],
+};
+function bandBadge(grade: string | null | undefined): string {
+  if (!grade) return '';
+  const [bg, fg] = BAND_COLORS[grade] ?? [FLBG, FLFG];
+  return `<span style="${F}font-size:11px;font-weight:700;color:${fg};background-color:${bg};padding:3px 8px;border-radius:999px;display:inline-block;margin-top:6px;">${escapeHtml(grade)}</span>`;
+}
+function metricCard(label: string, value: string, sub: string, grade?: string | null): string {
+  return `<div class="em-metric-card" style="background-color:#FFFFFF;border-radius:10px;border:1px solid ${LINE};box-sizing:border-box;height:142px;padding:14px 16px;">` +
     p(label, 11, MUTED, 600, 'text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;', '24px') +
-    p(value + g, 26, INK, 700, 'letter-spacing:-0.5px;margin-bottom:8px;', '1.1') + sub + '</div>';
+    p(value, 26, INK, 700, 'letter-spacing:-0.5px;margin-bottom:6px;', '1.1') + sub + bandBadge(grade) + '</div>';
 }
 
 const metricRow = (a: string, b: string) =>
@@ -212,15 +218,15 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     .concat(payload.scope.markets.length > 1 ? [payload.scope.markets.join(', ')] : [])
     .concat(payload.scope.jobFunctions.length ? [payload.scope.jobFunctions.length > 3 ? `${payload.scope.jobFunctions.length} job functions` : payload.scope.jobFunctions.join(', ')] : [])
     .map(escapeHtml).join(DOT);
-  const metric = (label: string, x: DigestMetric, suffix: string, hidden: string | null, grade?: string) =>
-    metricCard(label, x.value === null ? '–' : `${x.value}${suffix}`, pill(x.delta, prev, hidden), grade);
+  const metric = (label: string, x: DigestMetric & { grade?: string | null }, suffix: string, hidden: string | null) =>
+    metricCard(label, x.value === null ? '–' : `${x.value}${suffix}`, pill(x.delta, prev, hidden), x.grade);
   const scopeCard = `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="em-project-card" style="margin:16px 0;background-color:#F8FAFC;border-radius:12px;border:1px solid ${LINE};"><tbody><tr><td style="padding:20px;">` +
     `<table style="width:100%;border-collapse:collapse;border-spacing:0;"><tr>` +
     `<td style="width:28px;vertical-align:middle;padding-right:12px;">${mark(brandDomain, token, 28)}</td>` +
     `<td style="width:100%;vertical-align:middle;">${p(escapeHtml(payload.brand.name), 17, INK, 700, '', '1.2')}${p(scopeSub, 13, MUTED, 400, 'margin-top:2px;', '20px')}</td></tr></table>` +
     p(escapeHtml(payload.comparisonNote), 12, MUTED, 400, 'margin:14px 0 16px 0;', '1.4') +
     `<table style="width:100%;border-collapse:separate;border-spacing:0;">` +
-    metricRow(metric('Employer Perception Score', m.eps, '', hiddenEps, m.eps.grade), metric('Sentiment', m.sentiment, '%', hiddenSent)) +
+    metricRow(metric('Overall Score', m.eps, '', hiddenEps), metric('Sentiment', m.sentiment, '%', hiddenSent)) +
     `<tr class="em-metric-spacer"><td colspan="2" style="height:10px;font-size:0;line-height:0;"></td></tr>` +
     metricRow(metric('Visibility', m.visibility, '%', null), metric('Relevance', m.relevance, '', null)) +
     '</table></td></tr></tbody></table>';
