@@ -166,7 +166,7 @@ export function digestMarkdown(payload: DigestPayload): string {
   lines.push('');
   lines.push(`Here is how AI assistants described ${payload.brand.name} to candidates ${payload.scope.preposition} ${payload.scope.locationLabel} this quarter${prev ? `, and what changed since ${prev}` : ''}.`);
   lines.push('');
-  lines.push(`**Employer Perception Score:** ${m.eps.value ?? 'n/a'} (${m.eps.grade})${payload.sentimentChangeHidden ? '' : d(m.eps.delta)}`);
+  lines.push(`**Overall Score:** ${m.eps.value ?? 'n/a'} (${m.eps.grade})${payload.sentimentChangeHidden ? '' : d(m.eps.delta)}`);
   lines.push(`**Sentiment:** ${m.sentiment.value ?? 'n/a'}%${payload.sentimentChangeHidden ? ' (classifier updated, no change shown)' : d(m.sentiment.delta)}`);
   lines.push(`**Visibility:** ${m.visibility.value ?? 'n/a'}%${d(m.visibility.delta)}`);
   lines.push(`**Relevance:** ${m.relevance.value ?? 'n/a'}${d(m.relevance.delta)}`);

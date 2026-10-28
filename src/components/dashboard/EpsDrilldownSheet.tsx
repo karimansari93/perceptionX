@@ -505,7 +505,7 @@ Hard rules:
             <MetricBar label="Relevance" value={null} comingSoon />
           </div>
           <p className="text-xs text-gray-500 mt-3 leading-relaxed">
-            EPS scale: Poor &lt;50 · Fair 50–64 · Good 65–79 · Excellent 80+.
+            EPS scale: Needs improvement under 70 · Fair 70 to 74 · Strong 75 to 79 · Excellent 80+.
           </p>
         </section>
 

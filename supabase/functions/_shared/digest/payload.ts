@@ -9,6 +9,7 @@
 
 import { readRollups, buildAttributeRows } from '../px-tools/executors-insights.ts';
 import { scoreQuarters } from '../px-tools/executors-core.ts';
+import { bandLabel } from '../px-tools/bands.ts';
 import { resolveScope } from '../px-tools/scope.ts';
 import type { ResolvedScope, ToolContext } from '../px-tools/scope.ts';
 import { CLAUDE_PUBLISHED_OR, EXCLUDED_AI_MODELS_FILTER, monthToQuarter, pct, pointsDelta, sentimentPct } from '../px-tools/helpers.ts';
@@ -332,9 +333,9 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
     period: { quarter: latestQ, short: shortQuarter(latestQ), previousQuarter: previousQ, previousLabel },
     metrics: {
       eps: { value: latest.eps, delta: previous ? latest.eps - previous.eps : null, grade: latest.eps_label },
-      sentiment: { value: latest.positive_sentiment_pct, delta: previous ? pointsDelta(latest.positive_sentiment_pct, previous.positive_sentiment_pct) : null },
-      visibility: { value: latest.visibility_pct, delta: previous ? pointsDelta(latest.visibility_pct, previous.visibility_pct) : null },
-      relevance: { value: latest.relevance_pct, delta: previous ? pointsDelta(latest.relevance_pct, previous.relevance_pct) : null },
+      sentiment: { value: latest.positive_sentiment_pct, delta: previous ? pointsDelta(latest.positive_sentiment_pct, previous.positive_sentiment_pct) : null, grade: bandLabel('sentiment', latest.positive_sentiment_pct) },
+      visibility: { value: latest.visibility_pct, delta: previous ? pointsDelta(latest.visibility_pct, previous.visibility_pct) : null, grade: bandLabel('visibility', latest.visibility_pct) },
+      relevance: { value: latest.relevance_pct, delta: previous ? pointsDelta(latest.relevance_pct, previous.relevance_pct) : null, grade: bandLabel('relevance', latest.relevance_pct) },
     },
     comparisonNote: previous
       ? `Change since ${previousLabel} compares this quarter's collection with the previous one, as the dashboard does.`

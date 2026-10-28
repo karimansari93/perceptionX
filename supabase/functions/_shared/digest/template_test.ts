@@ -3,6 +3,7 @@ import { digestSubject, renderDigestHtml, sentimentBadge } from './template.ts';
 import { coverageRows, describeLocation, displayMarket, filterActions, groupRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
 import { cap, digestMarkdown, narrativeFromReply, validateNarrative } from './narrative.ts';
 import type { DigestPayload } from './types.ts';
+import { bandLabel } from '../px-tools/bands.ts';
 
 const payload: DigestPayload = {
   recipient: { firstName: 'Sreesha', email: 'sreesha@example.com' },
@@ -10,10 +11,10 @@ const payload: DigestPayload = {
   scope: { locationLabel: 'India', preposition: 'in', markets: ['India'], jobFunctions: ['Data Insights & Analytics', 'Integrated ERP'] },
   period: { quarter: 'Q4 2026', short: 'Q4 26', previousQuarter: 'Q3 2026', previousLabel: 'July' },
   metrics: {
-    eps: { value: 78, delta: 1, grade: 'Good' },
-    sentiment: { value: 84, delta: -4 },
-    visibility: { value: 68, delta: 2 },
-    relevance: { value: 80, delta: 11 },
+    eps: { value: 78, delta: 1, grade: 'Strong' },
+    sentiment: { value: 84, delta: -4, grade: 'Excellent' },
+    visibility: { value: 68, delta: 2, grade: 'Needs improvement' },
+    relevance: { value: 80, delta: 11, grade: 'Strong' },
   },
   comparisonNote: 'Change since July compares this quarter with the previous one.',
   sentimentChangeHidden: false,
@@ -128,7 +129,7 @@ Deno.test('validateNarrative strips dashes, caps lengths and drops notes that do
 
 Deno.test('digestMarkdown carries the figures for the chat thread', () => {
   const md = digestMarkdown(payload);
-  assertStringIncludes(md, '**Employer Perception Score:** 78 (Good) (up 1 points)');
+  assertStringIncludes(md, '**Overall Score:** 78 (Strong) (up 1 points)');
   assertStringIncludes(md, '- LinkedIn: 49% of answers (down 2 points)');
   assertStringIncludes(md, 'open employer questions');
   assertStringIncludes(md, 'Where to focus');
@@ -221,4 +222,20 @@ Deno.test('narrative comes from the tool call, with text JSON as the fallback', 
   let failed = false;
   try { narrativeFromReply([{ type: 'text', text: '{"preheader": "He said "no" and left", "action": "a"}' }]); } catch { failed = true; }
   assert(failed);
+});
+
+Deno.test('score bands: one definition for every surface', () => {
+  assertEquals(bandLabel('eps', 67), 'Needs improvement');
+  assertEquals(bandLabel('eps', 70), 'Fair');
+  assertEquals(bandLabel('eps', 76), 'Strong');
+  assertEquals(bandLabel('eps', 84), 'Excellent');
+  assertEquals(bandLabel('sentiment', 62), 'Fair');
+  assertEquals(bandLabel('sentiment', 57), 'Needs improvement');
+  assertEquals(bandLabel('visibility', 78), 'Strong');
+  assertEquals(bandLabel('relevance', 69), 'Needs improvement');
+  assertEquals(bandLabel('relevance', null), null);
+  const html = renderDigestHtml(payload, opts);
+  assertStringIncludes(html, '>Overall Score<');
+  assert(!html.includes('Employer Perception Score'));
+  assertStringIncludes(html, '>Strong</span>');
 });

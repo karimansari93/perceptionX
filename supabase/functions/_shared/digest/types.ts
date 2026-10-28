@@ -101,11 +101,12 @@ export interface DigestPayload {
     /** How the previous collection is named in prose: "July". */
     previousLabel: string | null;
   };
+  /** Each metric carries its band label (Excellent, Strong, Fair, Needs improvement), or null when the value is missing. */
   metrics: {
     eps: DigestMetric & { grade: string };
-    sentiment: DigestMetric;
-    visibility: DigestMetric;
-    relevance: DigestMetric;
+    sentiment: DigestMetric & { grade: string | null };
+    visibility: DigestMetric & { grade: string | null };
+    relevance: DigestMetric & { grade: string | null };
   };
   /** One line under the scope card explaining how change is measured. */
   comparisonNote: string;
