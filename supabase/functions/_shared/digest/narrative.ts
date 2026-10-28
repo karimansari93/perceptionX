@@ -185,7 +185,7 @@ export function digestMarkdown(payload: DigestPayload): string {
   }
   if (n?.action) lines.push('', '### Where to focus', n.action);
   if (payload.actions.length) {
-    lines.push('', '### From your report');
+    lines.push('', '### Your actions this quarter');
     for (const a of payload.actions) lines.push(`- **${a.number ? `${a.number} ` : ''}${a.title}**${a.priority ? ` (${a.priority} priority)` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
   }
   if (payload.employers.length) {
