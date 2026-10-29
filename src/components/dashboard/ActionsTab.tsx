@@ -1089,9 +1089,9 @@ function ActionDetail({ action, checks, activity, assigneeName, canChange, canAc
         </section>
       </div>
 
-      {/* Side column: plain fields, then the buttons. */}
-      <aside className="min-h-0 border-t border-gray-200 bg-white md:overflow-y-auto md:border-l md:border-t-0">
-        <div className="space-y-6 p-6">
+      {/* Side column: plain fields scroll, the buttons stay pinned at the bottom. */}
+      <aside className="flex min-h-0 flex-col border-t border-gray-200 bg-white md:border-l md:border-t-0">
+        <div className="space-y-6 p-6 md:min-h-0 md:flex-1 md:overflow-y-auto">
           {!isWatchItem && (
             <Field label="Assignee">
               <AssigneePicker
@@ -1139,66 +1139,66 @@ function ActionDetail({ action, checks, activity, assigneeName, canChange, canAc
           )}
 
           {cycleLabel(action.cycle_raised) && <Field label="Added">{cycleLabel(action.cycle_raised)}</Field>}
-
-          {(onAccept || onDone || onRestore || onDismiss || primaryLink || amplifyUrl || (domain && onSeeInSources)) && (
-            <div className="space-y-2 border-t border-gray-100 pt-5">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-gray-500">Actions</div>
-              {locked && (
-                <p className="flex items-center gap-1.5 pb-1 text-xs text-gray-500"><Lock className="h-3 w-3 shrink-0" />{locked}</p>
-              )}
-              {onAccept && (
-                <Button className="h-9 w-full rounded-md bg-blue-600 text-white hover:bg-blue-700" onClick={onAccept} disabled={off}>
-                  <Check className="mr-1.5 h-4 w-4" />Accept
-                </Button>
-              )}
-              {onDone && (
-                <Button className="h-9 w-full rounded-md bg-emerald-600 text-white hover:bg-emerald-700" onClick={onDone} disabled={off}>
-                  <CheckCircle2 className="mr-1.5 h-4 w-4" />Mark done
-                </Button>
-              )}
-              {onRestore && (
-                <Button variant="outline" className="h-9 w-full rounded-md" onClick={onRestore} disabled={off}>
-                  <RotateCcw className="mr-1.5 h-4 w-4" />Restore to suggested
-                </Button>
-              )}
-              {primaryLink && (
-                <Button asChild className="h-9 w-full rounded-md bg-blue-600 text-white hover:bg-blue-700">
-                  <a href={primaryLink.url} target="_blank" rel="noreferrer">
-                    <span className="truncate">{linkVerb}</span><ArrowRight className="ml-1.5 h-4 w-4 shrink-0" />
-                  </a>
-                </Button>
-              )}
-              {amplifyUrl && (
-                <Button asChild className="h-9 w-full rounded-md bg-[#DB5E89]/10 text-[#13274F] hover:bg-[#DB5E89]/20">
-                  <a href={amplifyUrl} target="_blank" rel="noreferrer">
-                    <Megaphone className="mr-1.5 h-4 w-4 shrink-0 text-[#DB5E89]" /><span className="truncate">Share with employees</span>
-                  </a>
-                </Button>
-              )}
-              {(moreLinks.length > 0 || (domain && onSeeInSources)) && (
-                <ul className="pt-1">
-                  {moreLinks.slice(0, 2).map((l) => (
-                    <li key={l.url}>
-                      <a href={l.url} target="_blank" rel="noreferrer" className="flex items-center justify-between py-1.5 text-sm text-gray-600 hover:text-gray-900">
-                        <span className="truncate">{l.label}</span><ArrowUpRight className="ml-2 h-3.5 w-3.5 shrink-0 text-gray-400" />
-                      </a>
-                    </li>
-                  ))}
-                  {domain && onSeeInSources && (
-                    <li>
-                      <button type="button" onClick={() => onSeeInSources(domain)} className="flex w-full items-center justify-between py-1.5 text-left text-sm text-gray-600 hover:text-gray-900">
-                        <span className="truncate">See {domain} in Sources</span><ArrowRight className="ml-2 h-3.5 w-3.5 shrink-0 text-gray-400" />
-                      </button>
-                    </li>
-                  )}
-                </ul>
-              )}
-              {onDismiss && (
-                <button type="button" onClick={onDismiss} disabled={off} className="w-full pt-2 text-center text-sm text-gray-400 hover:text-gray-700 disabled:opacity-60">Dismiss this action</button>
-              )}
-            </div>
-          )}
         </div>
+
+        {(onAccept || onDone || onRestore || onDismiss || primaryLink || amplifyUrl || (domain && onSeeInSources)) && (
+          <div className="shrink-0 space-y-2 border-t border-gray-100 p-6 pt-5">
+            <div className="text-[11px] font-medium uppercase tracking-wider text-gray-500">Actions</div>
+            {locked && (
+              <p className="flex items-center gap-1.5 pb-1 text-xs text-gray-500"><Lock className="h-3 w-3 shrink-0" />{locked}</p>
+            )}
+            {onAccept && (
+              <Button className="h-9 w-full rounded-md bg-blue-600 text-white hover:bg-blue-700" onClick={onAccept} disabled={off}>
+                <Check className="mr-1.5 h-4 w-4" />Accept
+              </Button>
+            )}
+            {onDone && (
+              <Button className="h-9 w-full rounded-md bg-emerald-600 text-white hover:bg-emerald-700" onClick={onDone} disabled={off}>
+                <CheckCircle2 className="mr-1.5 h-4 w-4" />Mark done
+              </Button>
+            )}
+            {onRestore && (
+              <Button variant="outline" className="h-9 w-full rounded-md" onClick={onRestore} disabled={off}>
+                <RotateCcw className="mr-1.5 h-4 w-4" />Restore to suggested
+              </Button>
+            )}
+            {primaryLink && (
+              <Button asChild className="h-9 w-full rounded-md bg-blue-600 text-white hover:bg-blue-700">
+                <a href={primaryLink.url} target="_blank" rel="noreferrer">
+                  <span className="truncate">{linkVerb}</span><ArrowRight className="ml-1.5 h-4 w-4 shrink-0" />
+                </a>
+              </Button>
+            )}
+            {amplifyUrl && (
+              <Button asChild className="h-9 w-full rounded-md bg-[#DB5E89]/10 text-[#13274F] hover:bg-[#DB5E89]/20">
+                <a href={amplifyUrl} target="_blank" rel="noreferrer">
+                  <Megaphone className="mr-1.5 h-4 w-4 shrink-0 text-[#DB5E89]" /><span className="truncate">Share with employees</span>
+                </a>
+              </Button>
+            )}
+            {(moreLinks.length > 0 || (domain && onSeeInSources)) && (
+              <ul className="pt-1">
+                {moreLinks.slice(0, 2).map((l) => (
+                  <li key={l.url}>
+                    <a href={l.url} target="_blank" rel="noreferrer" className="flex items-center justify-between py-1.5 text-sm text-gray-600 hover:text-gray-900">
+                      <span className="truncate">{l.label}</span><ArrowUpRight className="ml-2 h-3.5 w-3.5 shrink-0 text-gray-400" />
+                    </a>
+                  </li>
+                ))}
+                {domain && onSeeInSources && (
+                  <li>
+                    <button type="button" onClick={() => onSeeInSources(domain)} className="flex w-full items-center justify-between py-1.5 text-left text-sm text-gray-600 hover:text-gray-900">
+                      <span className="truncate">See {domain} in Sources</span><ArrowRight className="ml-2 h-3.5 w-3.5 shrink-0 text-gray-400" />
+                    </button>
+                  </li>
+                )}
+              </ul>
+            )}
+            {onDismiss && (
+              <button type="button" onClick={onDismiss} disabled={off} className="w-full pt-2 text-center text-sm text-gray-400 hover:text-gray-700 disabled:opacity-60">Dismiss this action</button>
+            )}
+          </div>
+        )}
       </aside>
     </div>
   );
