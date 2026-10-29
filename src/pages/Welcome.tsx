@@ -104,22 +104,45 @@ const Welcome = () => {
       try {
         const { data: { session: existing } } = await supabase.auth.getSession();
         if (existing) await supabase.auth.signOut({ scope: 'local' });
-        const { data, error } = await supabase.functions.invoke('redeem-invite', {
-          body: { token: inviteToken },
-        });
-        if (error) throw error;
-        if (!data?.ok || !data?.tokenHash) {
+        type Redeemed = { ok?: boolean; tokenHash?: string; reason?: string } | null;
+        const redeem = async (): Promise<Redeemed> => {
+          const { data, error } = await supabase.functions.invoke('redeem-invite', {
+            body: { token: inviteToken },
+          });
+          if (error) throw error;
+          return data as Redeemed;
+        };
+        const rejected = (data: Redeemed) => {
           setExpiredReason(
             data?.reason === 'used' ? 'used' : data?.reason === 'expired' ? 'expired' : 'invalid',
           );
           setSessionStatus('expired');
+        };
+        let data = await redeem();
+        if (!data?.ok || !data?.tokenHash) {
+          rejected(data);
           return;
         }
-        const { error: otpError } = await supabase.auth.verifyOtp({
+        let { error: otpError } = await supabase.auth.verifyOtp({
           token_hash: data.tokenHash,
           type: 'magiclink',
         });
-        if (otpError) throw otpError;
+        if (otpError) {
+          // The one-time code is single-use per user: a second open of the
+          // same link (another tab, or a mail scanner that runs the page)
+          // mints a newer code and cancels this one. Ask for a fresh code
+          // once; the server keeps the invite live until the password is set.
+          data = await redeem();
+          if (!data?.ok || !data?.tokenHash) {
+            rejected(data);
+            return;
+          }
+          ({ error: otpError } = await supabase.auth.verifyOtp({
+            token_hash: data.tokenHash,
+            type: 'magiclink',
+          }));
+          if (otpError) throw otpError;
+        }
         redeemState.current = 'done';
         setSessionStatus('valid');
         // Don't leave the token sitting in the URL / browser history.
@@ -218,7 +241,7 @@ const Welcome = () => {
           <div className="px-8 py-7 space-y-5">
             <p className="text-[14px] text-nightsky/70 leading-relaxed" style={sans}>
               {expiredReason === 'used'
-                ? 'This invite has already been accepted. If that was you, just log in with your email and password.'
+                ? 'This invite has already been used to set up an account. If that was you, log in with your email and password, or use Forgot password on the login page.'
                 : expiredReason === 'expired'
                   ? 'This invite link has expired. Ask your teammate to resend it from their dashboard — a resent invite is good for another 30 days.'
                   : 'This invite link is no longer valid or was cancelled. Ask your teammate to send you a new one from their dashboard.'}

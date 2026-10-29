@@ -277,6 +277,20 @@ serve(async (req) => {
       invited_email: email,
     });
 
+    // An invite counts as accepted once the invitee has finished the welcome
+    // form (name and password), which stamps profiles.onboarding_completed_at.
+    // A sign-in alone is not enough: the invite link signs them in before the
+    // form, and a link opened twice at once (two tabs, a mail scanner that
+    // runs the page) used to mark the invite accepted with no password set.
+    const hasFinishedSetup = async (userId: string): Promise<boolean> => {
+      const { data } = await admin
+        .from("profiles")
+        .select("onboarding_completed_at")
+        .eq("id", userId)
+        .maybeSingle();
+      return !!data?.onboarding_completed_at;
+    };
+
     // Creates the auth user, profile, membership and sends the invite email.
     // Returns the new user's id. `token` is the durable invite token: when
     // Resend is configured we email our own /welcome?invite=<token> link (good
@@ -384,13 +398,13 @@ serve(async (req) => {
         .eq("organization_id", organizationId)
         .order("sent_at", { ascending: false });
 
-      // Lazily flip pending → accepted once the invitee has signed in.
+      // Lazily flip pending → accepted once the invitee has finished setup.
       const inviteRows = await Promise.all(
         (invites ?? []).map(async (inv) => {
           if (inv.status !== "pending" || !inv.invited_user_id) return inv;
+          if (!(await hasFinishedSetup(inv.invited_user_id))) return inv;
           const { data: invitee } = await admin.auth.admin.getUserById(inv.invited_user_id);
-          const signedInAt = invitee?.user?.last_sign_in_at;
-          if (!signedInAt) return inv;
+          const signedInAt = invitee?.user?.last_sign_in_at ?? new Date().toISOString();
           const accepted = { status: "accepted", accepted_at: signedInAt };
           await admin.from("organization_invites").update(accepted).eq("id", inv.id);
           return { ...inv, ...accepted };
@@ -537,21 +551,28 @@ serve(async (req) => {
         .eq("organization_id", organizationId)
         .maybeSingle();
       if (!invite) return json({ error: "Invite not found" }, 404);
-      if (invite.status !== "pending") {
-        return json({ error: `Invite is already ${invite.status}` }, 400);
+      if (invite.status === "revoked") {
+        return json({ error: "Invite is already revoked" }, 400);
       }
 
-      // If the invitee already signed in, the invite is effectively accepted.
-      if (invite.invited_user_id) {
-        const { data: invitee } = await admin.auth.admin.getUserById(invite.invited_user_id);
-        const signedInAt = invitee?.user?.last_sign_in_at;
-        if (signedInAt) {
+      // Accepted means the invitee finished the welcome form. A row marked
+      // accepted before that (older rule: any sign-in) is still live, so a
+      // resend or revoke can rescue an invitee who never set a password.
+      if (invite.invited_user_id && (await hasFinishedSetup(invite.invited_user_id))) {
+        if (invite.status === "pending") {
+          const { data: invitee } = await admin.auth.admin.getUserById(invite.invited_user_id);
           await admin
             .from("organization_invites")
-            .update({ status: "accepted", accepted_at: signedInAt })
+            .update({
+              status: "accepted",
+              accepted_at: invitee?.user?.last_sign_in_at ?? new Date().toISOString(),
+            })
             .eq("id", invite.id);
-          return json({ error: "This invite was already accepted" }, 400);
         }
+        return json({ error: "This invite was already accepted" }, 400);
+      }
+      if (invite.status !== "pending" && invite.status !== "accepted") {
+        return json({ error: `Invite is already ${invite.status}` }, 400);
       }
 
       if (action === "revoke") {
@@ -587,6 +608,8 @@ serve(async (req) => {
       await admin
         .from("organization_invites")
         .update({
+          status: "pending",
+          accepted_at: null,
           invited_user_id: userId,
           token,
           sent_at: new Date().toISOString(),
