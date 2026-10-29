@@ -135,7 +135,6 @@ export const STATUS_LABEL: Record<string, string> = {
 export type Priority = 'high' | 'medium' | 'low';
 export const PRIORITIES: readonly Priority[] = ['high', 'medium', 'low'];
 export const PRIORITY_LABEL: Record<Priority, string> = { high: 'High', medium: 'Medium', low: 'Low' };
-export const PRIORITY_NOTE = 'Priority is the expected effect on what AI tells candidates. When to act is your call.';
 
 // The stored label, or null for anything else (unlabelled rows, old spellings).
 export const priorityOf = (a: Pick<CompanyAction, 'priority'>): Priority | null =>

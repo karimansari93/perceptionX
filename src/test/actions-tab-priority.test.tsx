@@ -57,9 +57,8 @@ async function mount(selectedLocation: string | null) {
 }
 
 describe('ActionsTab priority', () => {
-  it('shows the chip on every labelled card, High first, with the note and no timing wording', async () => {
+  it('shows the chip on every labelled card, High first, with no timing wording', async () => {
     const { container } = await mount(null);
-    expect(screen.getByText('Priority is the expected effect on what AI tells candidates. When to act is your call.')).toBeInTheDocument();
     // All-markets view: every action is for you, High, Medium, Low, then unlabelled.
     const suggested = screen.getByRole('region', { name: 'Suggested' });
     expect(titles(suggested)).toEqual([

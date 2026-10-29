@@ -41,7 +41,7 @@ import { GENERAL_KEY, canonicalizeLocationContext, countryCodeFor, type Location
 import {
   BOARD_COLUMNS, LANE_LABEL, STATUS_LABEL, typeLabel, buildBoard, cycleLabel, noteParts,
   sourcesTarget, displayTitle, selectionMarkets, actionScope, isPeopleAction, pickAmplifyLink, type AmplifyLink, readingView, trendText, type ReadingView, DISMISS_REASONS, dismissReasonLabel, timeAgo, COMMENT_MAX, type ActionActivity, type ActionCheck, type CompanyAction, type WorkStatus,
-  PRIORITIES, PRIORITY_LABEL, PRIORITY_NOTE, priorityOf, type Priority,
+  PRIORITIES, PRIORITY_LABEL, priorityOf, type Priority,
 } from '@/lib/actions';
 
 const db = supabase as any;
@@ -352,7 +352,6 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
           <p className="text-sm text-gray-500 mt-1">
             What to do next to change how AI describes you to candidates.
           </p>
-          {hasPriorities && <p className="mt-1 text-xs text-gray-400">{PRIORITY_NOTE}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-3">
         {hasPriorities && (
