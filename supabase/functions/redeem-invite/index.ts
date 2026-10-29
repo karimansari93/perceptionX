@@ -18,7 +18,14 @@ const corsHeaders = {
  * browser immediately verifies to sign in. Because the OTP is generated at click
  * time, the emailed invite link is not bound by the platform's 24h auth-link
  * cap — it lives for 30 days from send/resend (organization_invites.expires_at)
- * and stops working once the invite is accepted or revoked.
+ * and stops working once the invitee has finished setting up (name and
+ * password on /welcome, which stamps profiles.onboarding_completed_at) or the
+ * invite is revoked.
+ *
+ * A sign-in alone does not end the invite. The link signs the invitee in
+ * before they see the password form, so a link opened twice at once (two
+ * tabs, or a mail scanner that runs the page) used to count as accepted with
+ * no password set, and every later click was refused as "already used".
  *
  * Body: { "token": "<durable invite token>" }
  * Returns on success: { ok, tokenHash, type, orgName, inviterName }
@@ -51,10 +58,9 @@ serve(async (req) => {
       .eq("token", token)
       .maybeSingle();
 
-    // Unknown token, or an invite that's no longer live (revoked/accepted).
-    if (!invite || invite.status !== "pending") {
-      return json({ ok: false, reason: invite ? "used" : "invalid" });
-    }
+    // Unknown token, or a revoked invite.
+    if (!invite) return json({ ok: false, reason: "invalid" });
+    if (invite.status === "revoked") return json({ ok: false, reason: "invalid" });
 
     // Invite links are good for 30 days from send/resend; a resend from the
     // dashboard mints a fresh token and restarts the window.
@@ -62,18 +68,29 @@ serve(async (req) => {
       return json({ ok: false, reason: "expired" });
     }
 
-    // The invitee has an auth user from the original invite. If they've already
-    // signed in once, the invite is effectively accepted — reconcile the row and
+    // The invitee has an auth user from the original invite. Once they have
+    // finished the welcome form the invite is accepted — reconcile the row and
     // refuse to re-mint (the link is not a permanent credential). They can sign
-    // in normally, or reset their password, from /auth.
+    // in normally, or reset their password, from /auth. Until then the link
+    // keeps working, even if an earlier open already signed them in.
     if (!invite.invited_user_id) return json({ ok: false, reason: "invalid" });
     const { data: invitee } = await admin.auth.admin.getUserById(invite.invited_user_id);
     if (!invitee?.user?.email) return json({ ok: false, reason: "invalid" });
-    if (invitee.user.last_sign_in_at) {
-      await admin
-        .from("organization_invites")
-        .update({ status: "accepted", accepted_at: invitee.user.last_sign_in_at })
-        .eq("id", invite.id);
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("onboarding_completed_at")
+      .eq("id", invite.invited_user_id)
+      .maybeSingle();
+    if (profile?.onboarding_completed_at) {
+      if (invite.status === "pending") {
+        await admin
+          .from("organization_invites")
+          .update({
+            status: "accepted",
+            accepted_at: invitee.user.last_sign_in_at ?? profile.onboarding_completed_at,
+          })
+          .eq("id", invite.id);
+      }
       return json({ ok: false, reason: "used" });
     }
 
