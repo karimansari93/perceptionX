@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { claudeFetch } from "../_shared/claude-keys.ts";
+import { competitorPrompts } from "../_shared/competitor-prompt.ts";
 
 const MODEL = "claude-haiku-5-5";
 
@@ -28,86 +29,7 @@ serve(async (req) => {
     // Determine if this is for industry-wide extraction (no companyName) or competitor detection
     const isIndustryWide = !companyName || companyName.trim() === '';
 
-    // Call Claude to detect companies
-    const systemPrompt = isIndustryWide
-      ? `You are a helpful assistant that identifies ALL company names mentioned in text.
-Return ONLY a comma-separated list of ALL company names mentioned in the text, nothing else.
-
-IMPORTANT FORMAT RULES:
-- Return ONLY the company names separated by commas, nothing else
-- Do not include any explanatory text, prefixes, or suffixes
-- Use proper company name capitalization (e.g., "IBM" not "Ibm", "Salesforce" not "salesforce")
-- Include ALL companies mentioned, not just competitors
-- If no companies are found, return an empty string
-- Do not include phrases like "None" or "No companies found"
-
-Do NOT include:
-- Job boards (Glassdoor, Indeed, AmbitionBox, LinkedIn, Monster, CareerBuilder, ZipRecruiter, etc.)
-- Review sites (Trustpilot, G2, Capterra, etc.)
-- News sources (Reuters, Bloomberg, etc.)
-- Social media platforms (Twitter, Facebook, etc.)
-- Information aggregators (Crunchbase, PitchBook, etc.)
-- Market research firms (Gartner, Forrester, etc.)
-- Industry associations or organizations
-- Government agencies or regulatory bodies
-- Educational institutions
-- Consulting firms or agencies
-- The word "None" or any variation of it
-
-Example valid responses:
-"IBM, Salesforce, Oracle, Microsoft"
-"Procter & Gamble, Unilever, Nestlé, Coca-Cola"
-"" (empty string if no companies found)
-
-Example invalid responses:
-"None"
-"No companies found"
-"Companies include: IBM, Salesforce"
-"Some companies are IBM, Salesforce"`
-      : `You are a helpful assistant that identifies company names from text.
-Return ONLY a comma-separated list of company names that are direct competitors or alternatives to "${companyName}" in the same industry or market.
-
-IMPORTANT FORMAT RULES:
-- Return ONLY the company names separated by commas, nothing else
-- Do not include any explanatory text, prefixes, or suffixes
-- Use proper company name capitalization (e.g., "IBM" not "Ibm", "Salesforce" not "salesforce")
-- If no competitors are found, return an empty string
-- Do not include phrases like "None" or "No competitors found"
-
-A competitor is defined as:
-- A company that offers similar products/services in the same market
-- A company that competes for the same customers
-- A company that operates in the same industry segment
-
-Do NOT include:
-- Job boards (Glassdoor, Indeed, AmbitionBox, LinkedIn, Monster, CareerBuilder, ZipRecruiter, etc.)
-- Review sites (Trustpilot, G2, Capterra, etc.)
-- News sources (Reuters, Bloomberg, etc.)
-- Social media platforms (Twitter, Facebook, etc.)
-- Information aggregators (Crunchbase, PitchBook, etc.)
-- Market research firms (Gartner, Forrester, etc.)
-- Industry associations or organizations
-- Government agencies or regulatory bodies
-- Educational institutions
-- Consulting firms or agencies
-- The word "None" or any variation of it
-
-Exclude the main company name itself.
-
-Example valid responses:
-"IBM, Salesforce, Oracle"
-"Microsoft, Apple, Google"
-"" (empty string if no competitors found)
-
-Example invalid responses:
-"None"
-"No competitors found"
-"Competitors include: IBM, Salesforce"
-"Some competitors are IBM, Salesforce"`;
-
-    const userPrompt = isIndustryWide
-      ? `In the following text, identify EVERY company name that is mentioned. You must list ALL companies mentioned, not just a few. Return ONLY a comma-separated list of company names with proper capitalization, nothing else:\n\n${response}`
-      : `In the following text, identify all company names that are mentioned as competitors or alternatives to "${companyName}". Return ONLY a comma-separated list of company names with proper capitalization, nothing else:\n\n${response}`;
+    const { systemPrompt, userPrompt } = competitorPrompts(response, companyName);
 
     // Claude Haiku, thinking off. Was OpenAI gpt-4.1-nano until OpenAI retired
     // it (404 model_not_found from 2026-10-23), which left detected_competitors
@@ -139,6 +61,14 @@ Example invalid responses:
 
     const data = await claudeResponse.json();
     const textBlocks = (data.content || []).filter((b: any) => b.type === 'text');
+    // Haiku answers "return an empty string" with no text block at all, so a
+    // finished turn with no text means no competitors, not a failure.
+    if (textBlocks.length === 0 && data.stop_reason === 'end_turn') {
+      return new Response(
+        JSON.stringify({ detectedCompetitors: '' }),
+        { headers: corsHeaders }
+      );
+    }
     if (textBlocks.length === 0) {
       console.error('Claude returned no content:', JSON.stringify(data));
       return new Response(

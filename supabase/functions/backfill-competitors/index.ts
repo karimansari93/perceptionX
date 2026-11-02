@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { filterCompetitorNames } from "../_shared/competitor-prompt.ts";
 
 // One-off backfill of prompt_responses.detected_competitors (Rodrigo,
 // 2026-11-02). detect-competitors called OpenAI gpt-4.1-nano until OpenAI
@@ -199,28 +200,11 @@ async function detect(text: string, companyName: string): Promise<string | null>
       return null;
     }
     const data = await res.json();
-    return filterNames((data.detectedCompetitors || "") as string, companyName);
+    return filterCompetitorNames((data.detectedCompetitors || "") as string, companyName);
   } catch (e) {
     console.error("[backfill-competitors] detect-competitors failed:", e);
     return null;
   }
-}
-
-// Same filter analyze-response applies before it stores detected_competitors.
-function filterNames(raw: string, companyName: string): string {
-  const stopwords = new Set([
-    "other", "others", "equal", "training", "development", "skills", "school", "its", "the", "and", "or",
-    "companies", "company", "co", "inc", "llc", "ltd",
-  ]);
-  return raw
-    .split(",")
-    .map((n) => n.trim())
-    .filter((n) => n.length >= 2)
-    .filter((n) => !/\bother\b/i.test(n) || /\bother\b/i.test(companyName) === false)
-    .filter((n) => /[A-Z]/.test(n))
-    .filter((n) => !stopwords.has(n.toLowerCase()))
-    .slice(0, 10)
-    .join(", ");
 }
 
 function jwtRole(req: Request): string | null {
