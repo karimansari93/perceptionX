@@ -1,6 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { claudeFetch } from "../_shared/claude-keys.ts";
+
+const MODEL = "claude-haiku-5-5";
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -25,7 +28,7 @@ serve(async (req) => {
     // Determine if this is for industry-wide extraction (no companyName) or competitor detection
     const isIndustryWide = !companyName || companyName.trim() === '';
 
-    // Call OpenAI to detect companies
+    // Call Claude to detect companies
     const systemPrompt = isIndustryWide
       ? `You are a helpful assistant that identifies ALL company names mentioned in text.
 Return ONLY a comma-separated list of ALL company names mentioned in the text, nothing else.
@@ -106,48 +109,44 @@ Example invalid responses:
       ? `In the following text, identify EVERY company name that is mentioned. You must list ALL companies mentioned, not just a few. Return ONLY a comma-separated list of company names with proper capitalization, nothing else:\n\n${response}`
       : `In the following text, identify all company names that are mentioned as competitors or alternatives to "${companyName}". Return ONLY a comma-separated list of company names with proper capitalization, nothing else:\n\n${response}`;
 
-    const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    // Claude Haiku, thinking off. Was OpenAI gpt-4.1-nano until OpenAI retired
+    // it (404 model_not_found from 2026-10-23), which left detected_competitors
+    // null on every answer collected after that. Haiku 5.5 only accepts its
+    // default sampling, so no temperature.
+    const claudeResponse = await claudeFetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
+        'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'gpt-4.1-nano',
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: userPrompt
-          }
-        ],
-        temperature: 0.2,
-        max_tokens: isIndustryWide ? 500 : 200
+        model: MODEL,
+        max_tokens: isIndustryWide ? 500 : 200,
+        thinking: { type: 'disabled' },
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }]
       })
     });
 
-    if (!openAIResponse.ok) {
-      const errBody = await openAIResponse.text();
-      console.error(`OpenAI error ${openAIResponse.status}: ${errBody}`);
+    if (!claudeResponse.ok) {
+      const errBody = await claudeResponse.text();
+      console.error(`Claude error ${claudeResponse.status}: ${errBody}`);
       return new Response(
-        JSON.stringify({ error: 'openai_error', status: openAIResponse.status, body: errBody }),
+        JSON.stringify({ error: 'claude_error', status: claudeResponse.status, body: errBody }),
         { status: 502, headers: corsHeaders }
       );
     }
 
-    const data = await openAIResponse.json();
-    const content = data.choices?.[0]?.message?.content;
-    if (typeof content !== 'string') {
-      console.error('OpenAI returned no content:', JSON.stringify(data));
+    const data = await claudeResponse.json();
+    const textBlocks = (data.content || []).filter((b: any) => b.type === 'text');
+    if (textBlocks.length === 0) {
+      console.error('Claude returned no content:', JSON.stringify(data));
       return new Response(
-        JSON.stringify({ error: 'openai_no_content', raw: data }),
+        JSON.stringify({ error: 'claude_no_content', raw: data }),
         { status: 502, headers: corsHeaders }
       );
     }
-    let detectedCompetitors = content.trim();
+    let detectedCompetitors = textBlocks.map((b: any) => b.text).join('').trim();
 
     // Filter out responses that indicate no competitors were found
     if (
