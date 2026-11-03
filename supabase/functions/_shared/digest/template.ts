@@ -198,8 +198,15 @@ function smallTable(headers: string[], rows: string[][]): string {
 
 const spacer = '<div style="height:10px;"></div>';
 
-function groupTable(rows: DigestGroupRow[], head: string, hideSentimentChange: boolean): string {
+function groupTable(rows: DigestGroupRow[], head: string, hideSentimentChange: boolean, withVisibility = true): string {
   const withSentimentChange = !hideSentimentChange && rows.some(r => r.sentimentDelta !== null);
+  // The job function table is sentiment only (Karim, 2026-11-03): visibility
+  // per function read as a measure of the roles, not of the employer.
+  if (!withVisibility) {
+    return withSentimentChange
+      ? smallTable([head, 'Sentiment', 'Change'], rows.map(r => [escapeHtml(r.name), sentimentBadge(r.positivePct), chg(r.sentimentDelta)]))
+      : smallTable([head, 'Sentiment'], rows.map(r => [escapeHtml(r.name), sentimentBadge(r.positivePct)]));
+  }
   if (withSentimentChange) {
     return smallTable([head, 'Sentiment', 'Change', 'Visibility'],
       rows.map(r => [escapeHtml(r.name), sentimentBadge(r.positivePct), chg(r.sentimentDelta), pctText(r.namedPct)]));
@@ -261,7 +268,7 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     ? section('By market', groupSub(''), groupTable(payload.byMarket, 'Market', payload.sentimentChangeHidden) + (n?.marketsNote ? spacer + p(prose(n.marketsNote), 13, BODY) : ''))
     : '';
   const functions = payload.byFunction.length > 1
-    ? section('By job function', groupSub(''), groupTable(payload.byFunction, 'Function', payload.sentimentChangeHidden) + (n?.functionsNote ? spacer + p(prose(n.functionsNote), 13, BODY) : ''))
+    ? section('By job function', payload.sentimentChangeHidden || !prev ? 'Positive sentiment by job function.' : `Positive sentiment by job function, and the change since ${escapeHtml(prev)}.`, groupTable(payload.byFunction, 'Function', payload.sentimentChangeHidden, false) + (n?.functionsNote ? spacer + p(prose(n.functionsNote), 13, BODY) : ''))
     : '';
 
   // The AI-written focus box only stands in when the register has no actions

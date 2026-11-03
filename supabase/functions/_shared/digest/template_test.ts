@@ -304,3 +304,17 @@ Deno.test('the evidence covers the attributes that fell most, as well as the wea
   assertEquals(ev[0].fell, 5);
   assertEquals(ev[2].fell, null);
 });
+
+Deno.test('the job function table shows sentiment only', () => {
+  const rows = [
+    { name: 'Finance', positivePct: 80, sentimentDelta: -2, namedPct: 70, visibilityDelta: 1 },
+    { name: 'Marketing', positivePct: 75, sentimentDelta: 1, namedPct: 60, visibilityDelta: -1 },
+  ];
+  const html = renderDigestHtml({ ...payload, byFunction: rows as any, byMarket: [] }, opts);
+  const start = html.indexOf('By job function');
+  assert(start > -1);
+  const section = html.slice(start, html.indexOf('</table>', html.indexOf('Marketing', start)));
+  assert(!section.includes('Visibility'));
+  assert(!section.includes('70%'));
+  assert(!digestMarkdown({ ...payload, byFunction: rows as any }).includes('visibility 70%'));
+});

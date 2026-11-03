@@ -42,6 +42,7 @@ Hard rules:
 - Reply by calling the write_update tool once with these fields (no prose outside the tool call):
 {"preheader": string, "callouts": [{"title": string, "body": string}], "functionsNote": string|null, "marketsNote": string|null, "action": string}
 - 3 or 4 callouts. preheader under ${LIMITS.preheader} characters. title under ${LIMITS.title}. body under ${LIMITS.body}. notes under ${LIMITS.note}. action under ${LIMITS.action}.
+- functionsNote is about sentiment only: the job function table shows no visibility, so never give a visibility figure by function.
 - functionsNote is null when the payload has fewer than two job functions; marketsNote is null when it has fewer than two markets.`;
 
 const stripDashes = (s: string) => s.replace(/\s*[—–]\s*/g, ', ').replace(/, ,/g, ',');
@@ -222,7 +223,7 @@ export function digestMarkdown(payload: DigestPayload): string {
   }
   if (payload.byFunction.length > 1) {
     lines.push('', '### By job function');
-    for (const r of payload.byFunction) lines.push(`- ${r.name}: ${r.positivePct ?? 'n/a'}% positive${payload.sentimentChangeHidden ? '' : d(r.sentimentDelta)}, visibility ${r.namedPct ?? 'n/a'}%`);
+    for (const r of payload.byFunction) lines.push(`- ${r.name}: ${r.positivePct ?? 'n/a'}% positive${payload.sentimentChangeHidden ? '' : d(r.sentimentDelta)}`);
     if (n?.functionsNote) lines.push('', n.functionsNote);
   }
   if (n?.action && !payload.actions.length) lines.push('', '### Where to focus', n.action);
