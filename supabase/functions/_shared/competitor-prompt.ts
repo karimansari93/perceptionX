@@ -118,11 +118,12 @@ export function filterCompetitorNames(raw: string, companyName: string): string 
 // that is not a plain list of names is stored as none found, and job sites and
 // review sites the prompt already excludes are dropped.
 const NOT_A_LIST = /^(none|n\/a|no competitors( found)?)\.?$|\bempty (string|list)\b/i;
-const EXCLUDED_SITES = /^(glassdoor|indeed|linkedin|seek|kununu|levels\.fyi|reddit|ambitionbox|comparably|jobs\.ch)$/i;
+const EXCLUDED_SITES = /^(glassdoor|indeed|linkedin|seek|kununu|levels\.fyi|reddit|ambitionbox|comparably|jobs\.ch|blind)$/i;
 
 export function cleanCompetitorReply(raw: string): string {
   const reply = raw.trim().replace(/^"|"$/g, '').trim();
-  if (!reply || NOT_A_LIST.test(reply)) return '';
+  // A whole reply in brackets is a note, e.g. "(No competitors mentioned)".
+  if (!reply || NOT_A_LIST.test(reply) || /^\(.*\)$/s.test(reply)) return '';
   const names = reply.split(',').map((n) => n.trim()).filter(Boolean);
   // A sentence, not a list: a long item, or sentence punctuation inside one.
   if (names.some((n) => n.split(/\s+/).length > 6 || /[.!?:]\s|\n/.test(n))) return '';
