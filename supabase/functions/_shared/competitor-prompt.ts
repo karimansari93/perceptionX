@@ -117,7 +117,7 @@ export function filterCompetitorNames(raw: string, companyName: string): string 
 // there were none, "None", the literal "(empty string)", or a job site. A reply
 // that is not a plain list of names is stored as none found, and job sites and
 // review sites the prompt already excludes are dropped.
-const NOT_A_LIST = /^(\(?empty string\)?|none|n\/a|no competitors( found)?)\.?$/i;
+const NOT_A_LIST = /^(none|n\/a|no competitors( found)?)\.?$|\bempty (string|list)\b/i;
 const EXCLUDED_SITES = /^(glassdoor|indeed|linkedin|seek|kununu|levels\.fyi|reddit|ambitionbox|comparably|jobs\.ch)$/i;
 
 export function cleanCompetitorReply(raw: string): string {
