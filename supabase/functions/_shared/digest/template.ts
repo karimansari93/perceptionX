@@ -69,7 +69,7 @@ export function logoUrl(domain: string, token: string, size = 64): string {
 
 function mark(domain: string, token: string, size = 18): string {
   return `<span style="background-color:#ffffff;border:1px solid ${LINE};border-radius:4px;display:inline-block;line-height:0;padding:2px;vertical-align:middle;">` +
-    `<img alt="" height="${size}" width="${size}" src="${logoUrl(domain, token)}" style="display:block;border:0;border-radius:3px;background:#fff;"></span>`;
+    `<img alt="${escapeHtml(domain)}" height="${size}" width="${size}" src="${logoUrl(domain, token)}" style="display:block;border:0;border-radius:3px;background:#fff;"></span>`;
 }
 
 function attributeLabel(row: DigestAttributeRow, appUrl: string): string {
@@ -86,10 +86,20 @@ function bandBadge(grade: string | null | undefined): string {
   const [bg, fg] = BAND_COLORS[grade] ?? [FLBG, FLFG];
   return `<span style="${F}font-size:11px;font-weight:700;color:${fg};background-color:${bg};padding:3px 8px;border-radius:999px;display:inline-block;margin-top:6px;">${escapeHtml(grade)}</span>`;
 }
+// What each score measures, in one plain line under it (readers asked).
+export const METRIC_DEFINITIONS: Record<string, string> = {
+  'Overall Score': 'Sentiment, visibility and relevance combined, out of 100.',
+  Sentiment: 'Share of the opinions AI gives about you that are positive.',
+  Visibility: 'Share of answers that name you.',
+  Relevance: 'How current the sources AI cites about you are.',
+};
+
 function metricCard(label: string, value: string, sub: string, grade?: string | null): string {
-  return `<div class="em-metric-card" style="background-color:#FFFFFF;border-radius:10px;border:1px solid ${LINE};box-sizing:border-box;height:142px;padding:14px 16px;">` +
+  const def = METRIC_DEFINITIONS[label];
+  return `<div class="em-metric-card" style="background-color:#FFFFFF;border-radius:10px;border:1px solid ${LINE};box-sizing:border-box;height:172px;padding:14px 16px;">` +
     p(label, 11, MUTED, 600, 'text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;', '24px') +
-    p(value, 26, INK, 700, 'letter-spacing:-0.5px;margin-bottom:6px;', '1.1') + sub + bandBadge(grade) + '</div>';
+    p(value, 26, INK, 700, 'letter-spacing:-0.5px;margin-bottom:6px;', '1.1') + sub + bandBadge(grade) +
+    (def ? p(def, 11, MUTED, 400, 'margin-top:8px;', '1.35') : '') + '</div>';
 }
 
 const metricRow = (a: string, b: string) =>
@@ -182,10 +192,10 @@ const spacer = '<div style="height:10px;"></div>';
 function groupTable(rows: DigestGroupRow[], head: string, hideSentimentChange: boolean): string {
   const withSentimentChange = !hideSentimentChange && rows.some(r => r.sentimentDelta !== null);
   if (withSentimentChange) {
-    return smallTable([head, 'Sentiment', 'Change', 'Named in'],
+    return smallTable([head, 'Sentiment', 'Change', 'Visibility'],
       rows.map(r => [escapeHtml(r.name), sentimentBadge(r.positivePct), chg(r.sentimentDelta), pctText(r.namedPct)]));
   }
-  return smallTable([head, 'Sentiment', 'Named in', 'Change'],
+  return smallTable([head, 'Sentiment', 'Visibility', 'Change'],
     rows.map(r => [escapeHtml(r.name), sentimentBadge(r.positivePct), pctText(r.namedPct), chg(r.visibilityDelta)]));
 }
 
@@ -204,7 +214,7 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
   const n = payload.narrative;
 
   const header = `<table style="width:100%;border-collapse:collapse;border-spacing:0;"><tr>` +
-    `<td class="em-stack" style="vertical-align:top;"><img alt="PerceptionX" height="32" src="${appUrl}/logos/PerceptionX-PrimaryLogo.png" style="display:block;border:0;height:32px;width:auto;"></td>` +
+    `<td class="em-stack" style="vertical-align:top;"><img alt="PerceptionX" height="32" width="184" src="${appUrl}/logos/PerceptionX-PrimaryLogo.png" style="display:block;border:0;height:32px;width:184px;"></td>` +
     `<td class="em-stack em-header-meta" style="vertical-align:top;text-align:right;">${p('QUARTERLY UPDATE', 11, PINK, 700, 'letter-spacing:0.6px;', '14px')}${p(escapeHtml(payload.period.quarter), 13, MUTED, 500, 'margin-top:2px;', '16px')}</td></tr></table>`;
 
   const since = prev ? `, and what changed since ${escapeHtml(prev)}` : '';
@@ -259,7 +269,7 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
 
   const sinceSub = prev ? `, with the change since ${escapeHtml(prev)}` : '';
   const peers = payload.employers.length
-    ? section('Employers AI names alongside you', `${escapeHtml(payload.employersNote)}${sinceSub}.`, barList(payload.employers.map(r => barRow(r, token))))
+    ? section('Employers AI names alongside you', `${escapeHtml(payload.employersNote)}${sinceSub}.${payload.employersContext ? ' ' + escapeHtml(payload.employersContext) : ''}`, barList(payload.employers.map(r => barRow(r, token))))
     : '';
   const sources = payload.sources.length
     ? section('Sources AI reads', `Share of answers citing each source${sinceSub}.${payload.sources.some(s => s.owned) ? ' Your own sites are marked.' : ''}`, barList(payload.sources.map(r => barRow(r, token))))
@@ -271,7 +281,7 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     return payload.sentimentChangeHidden || !prev ? base : base.concat(chg(a.delta));
   });
   const themes = payload.attributes.length
-    ? section('Themes', themeSub, smallTable(payload.sentimentChangeHidden || !prev ? ['Attribute', 'Raised in', 'Sentiment'] : ['Attribute', 'Raised in', 'Sentiment', 'Change'], themeRows))
+    ? section('Themes', themeSub, smallTable(payload.sentimentChangeHidden || !prev ? ['Attribute', 'Share of answers', 'Sentiment'] : ['Attribute', 'Share of answers', 'Sentiment', 'Change'], themeRows))
     : '';
 
   // Campaign parameters on our own links only, so the app's analytics can

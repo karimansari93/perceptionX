@@ -190,12 +190,12 @@ export function digestMarkdown(payload: DigestPayload): string {
   }
   if (payload.byMarket.length > 1) {
     lines.push('', '### By market');
-    for (const r of payload.byMarket) lines.push(`- ${r.name}: ${r.positivePct ?? 'n/a'}% positive, named in ${r.namedPct ?? 'n/a'}% of answers${d(r.visibilityDelta)}`);
+    for (const r of payload.byMarket) lines.push(`- ${r.name}: ${r.positivePct ?? 'n/a'}% positive, visibility ${r.namedPct ?? 'n/a'}%${d(r.visibilityDelta)}`);
     if (n?.marketsNote) lines.push('', n.marketsNote);
   }
   if (payload.byFunction.length > 1) {
     lines.push('', '### By job function');
-    for (const r of payload.byFunction) lines.push(`- ${r.name}: ${r.positivePct ?? 'n/a'}% positive${payload.sentimentChangeHidden ? '' : d(r.sentimentDelta)}, named in ${r.namedPct ?? 'n/a'}% of answers`);
+    for (const r of payload.byFunction) lines.push(`- ${r.name}: ${r.positivePct ?? 'n/a'}% positive${payload.sentimentChangeHidden ? '' : d(r.sentimentDelta)}, visibility ${r.namedPct ?? 'n/a'}%`);
     if (n?.functionsNote) lines.push('', n.functionsNote);
   }
   if (n?.action && !payload.actions.length) lines.push('', '### Where to focus', n.action);
@@ -210,7 +210,7 @@ export function digestMarkdown(payload: DigestPayload): string {
   }
   if (payload.employers.length) {
     lines.push('', '### Employers AI names alongside you');
-    lines.push(`${payload.employersNote}.`);
+    lines.push(`${payload.employersNote}.${payload.employersContext ? ` ${payload.employersContext}` : ''}`);
     for (const e of payload.employers) lines.push(`- ${e.name}${e.you ? ' (you)' : ''}: ${e.pct}%${d(e.delta)}`);
   }
   if (payload.sources.length) {
@@ -219,7 +219,7 @@ export function digestMarkdown(payload: DigestPayload): string {
   }
   if (payload.attributes.length) {
     lines.push('', '### Themes');
-    for (const a of payload.attributes) lines.push(`- ${a.name}: raised in ${a.raisedPct}% of answers, ${a.positivePct ?? 'n/a'}% positive${payload.sentimentChangeHidden ? '' : d(a.delta)}`);
+    for (const a of payload.attributes) lines.push(`- ${a.name}: in ${a.raisedPct}% of answers, ${a.positivePct ?? 'n/a'}% positive${payload.sentimentChangeHidden ? '' : d(a.delta)}`);
   }
   lines.push('', 'Ask me what sits behind any of these numbers.');
   return lines.join('\n');
