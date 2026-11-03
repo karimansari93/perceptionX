@@ -84,7 +84,16 @@ const BAND_COLORS: Record<string, [string, string]> = {
 function bandBadge(grade: string | null | undefined): string {
   if (!grade) return '';
   const [bg, fg] = BAND_COLORS[grade] ?? [FLBG, FLFG];
-  return `<span style="${F}font-size:11px;font-weight:700;color:${fg};background-color:${bg};padding:3px 8px;border-radius:999px;display:inline-block;margin-top:6px;">${escapeHtml(grade)}</span>`;
+  return `<span style="${F}font-size:11px;font-weight:700;color:${fg};background-color:${bg};padding:3px 8px;border-radius:999px;display:inline-block;">${escapeHtml(grade)}</span>`;
+}
+
+// The change pill above the band badge. Desktop Outlook ignores margins on
+// inline elements, so the two ran together there; each sits in its own table
+// row and the gap is cell padding, which every client honours.
+function stackBadges(top: string, bottom: string): string {
+  if (!bottom) return top;
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">` +
+    `<tr><td style="padding:0 0 6px 0;">${top}</td></tr><tr><td style="padding:0;">${bottom}</td></tr></table>`;
 }
 // What each score measures, in one plain line under it (readers asked).
 export const METRIC_DEFINITIONS: Record<string, string> = {
@@ -98,7 +107,7 @@ function metricCard(label: string, value: string, sub: string, grade?: string | 
   const def = METRIC_DEFINITIONS[label];
   return `<div class="em-metric-card" style="background-color:#FFFFFF;border-radius:10px;border:1px solid ${LINE};box-sizing:border-box;height:172px;padding:14px 16px;">` +
     p(label, 11, MUTED, 600, 'text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;', '24px') +
-    p(value, 26, INK, 700, 'letter-spacing:-0.5px;margin-bottom:6px;', '1.1') + sub + bandBadge(grade) +
+    p(value, 26, INK, 700, 'letter-spacing:-0.5px;margin-bottom:6px;', '1.1') + stackBadges(sub, bandBadge(grade)) +
     (def ? p(def, 11, MUTED, 400, 'margin-top:8px;', '1.35') : '') + '</div>';
 }
 
