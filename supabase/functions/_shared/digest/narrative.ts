@@ -16,6 +16,9 @@ import type { DigestNarrative, DigestPayload } from './types.ts';
 const MODEL = Deno.env.get('CLAUDE_MODEL') || 'claude-opus-5';
 const MAX_TOKENS = 4000;
 const EVIDENCE_ATTRIBUTES = 2;
+// Attributes whose sentiment fell most, read with last quarter's themes too,
+// so a change can be explained by what AI now says within them.
+const EVIDENCE_FALLERS = 2;
 
 const LIMITS = { preheader: 140, title: 80, body: 560, note: 480, action: 680 };
 
@@ -27,6 +30,9 @@ Hard rules:
 - The employers list is measured on the basis given in employersNote (usually the open "which employers" questions only). When you compare the client with those employers, say it is on those questions, and never compare the client's headline visibility with an employer's share.
 - Two different measures must never sit in one sentence, one callout or one contrast: the headline visibility (metrics.visibility, named anywhere in any answer) and the client's share in the employers list (named as an employer to consider on the open employer questions). Never write "visible but not considered", "known but not shortlisted" or any framing that sets the two against each other. A callout about the employers list uses only that list's figures, opens by naming the basis ("On the open employer questions, where candidates ask which employers to consider, AI names the client in 9% of answers"), compares with the employers on that list, and says what would put the client on more of those answers. The headline visibility belongs in its own callout, or in none.
 - Never name an AI assistant, model or vendor. Say "AI" or "AI assistants".
+- Explain every change thematically: which attributes moved, and, from the evidence, what AI now says within them that it did not say last quarter (or says less). Never explain a change by which AI assistants answered, the mix of assistants, the collection or the method.
+- The share of answers that name the client is "visibility". Never write "naming", "named in" or "naming rate".
+- functionsNote and marketsNote never restate the table's figures one by one; the reader can see the table. Say what explains the differences, or the shared movement, in attribute and theme terms, with at most two figures. When the groups move together, say so in one sentence and give the shared thematic cause.
 - Never use an em dash or en dash. Use commas, full stops or colons.
 - Never mention raw counts of answers, responses, prompts or themes.
 - Do not name any company other than the client, the employers in the payload's employers list, and the sources in the payload's sources list.
@@ -97,6 +103,10 @@ function parseJsonReply(text: string): any {
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
+// Words the prose must not use: "naming" for visibility, and AI assistant
+// names (changes are explained by attribute and theme, never by assistant).
+export const BANNED_PROSE = /\bnaming\b|\bnamed in\b|chatgpt|openai|perplexity|gemini|ai overviews?|ai mode|\bclaude\b|\bcopilot\b/i;
+
 export function validateNarrative(raw: any, payload: DigestPayload, opts: { lenient?: boolean } = {}): DigestNarrative {
   const callouts = Array.isArray(raw?.callouts) ? raw.callouts : [];
   const out: DigestNarrative = {
@@ -108,6 +118,11 @@ export function validateNarrative(raw: any, payload: DigestPayload, opts: { leni
     action: cap(raw?.action, LIMITS.action),
   };
   if (!out.preheader || !out.action || out.callouts.length < 2) throw new Error('Narrative reply was incomplete.');
+  const prose = [out.preheader, out.action, out.functionsNote, out.marketsNote, ...out.callouts.flatMap(c => [c.title, c.body])].filter(Boolean).join(' ');
+  const banned = prose.match(BANNED_PROSE);
+  if (banned && !opts.lenient) {
+    throw new Error(`the prose says "${banned[0]}"; say "visibility" for how often AI names the client, and explain changes by attribute and theme, never by AI assistant`);
+  }
   const longTitles = callouts.filter((c: any) => String(c?.title ?? '').trim().length > LIMITS.title).length;
   if (longTitles && !opts.lenient) {
     throw new Error(`${longTitles} callout title(s) ran past ${LIMITS.title} characters; a title is one short headline, not a sentence`);
@@ -115,19 +130,31 @@ export function validateNarrative(raw: any, payload: DigestPayload, opts: { leni
   return out;
 }
 
-// The weakest attributes' real themes and the sources behind them, from the
-// analyst tools, so the action can name the page AI reads and what it says.
+// Real themes and the sources behind them, from the analyst tools: the
+// weakest attributes (so the action can name the page AI reads and what it
+// says) and the attributes whose sentiment fell most, with last quarter's
+// themes alongside (so a change is explained by what AI now says).
+export function evidenceAttributes(payload: DigestPayload): Array<{ attributeId: string; name: string; fell: number | null }> {
+  const scored = payload.attributes.filter(a => a.positivePct !== null);
+  const weakest = [...scored].sort((a, b) => (a.positivePct ?? 0) - (b.positivePct ?? 0)).slice(0, EVIDENCE_ATTRIBUTES);
+  const fallers = payload.sentimentChangeHidden ? [] : [...scored]
+    .filter(a => a.delta !== null && a.delta <= -2)
+    .sort((a, b) => (a.delta ?? 0) - (b.delta ?? 0))
+    .slice(0, EVIDENCE_FALLERS);
+  const out = new Map<string, { attributeId: string; name: string; fell: number | null }>();
+  for (const a of fallers) out.set(a.attributeId, { attributeId: a.attributeId, name: a.name, fell: -(a.delta ?? 0) });
+  for (const a of weakest) if (!out.has(a.attributeId)) out.set(a.attributeId, { attributeId: a.attributeId, name: a.name, fell: null });
+  return [...out.values()];
+}
+
 async function evidence(ctx: ToolContext, payload: DigestPayload, companyId: string, locationKey: string | null): Promise<string> {
-  const weakest = payload.attributes
-    .filter(a => a.positivePct !== null)
-    .sort((a, b) => (a.positivePct ?? 0) - (b.positivePct ?? 0))
-    .slice(0, EVIDENCE_ATTRIBUTES);
-  const blocks = await Promise.all(weakest.map(async a => {
+  const blocks = await Promise.all(evidenceAttributes(payload).map(async a => {
     const json = await executeTool(ctx, 'get_attribute_themes', {
-      company_id: companyId, attribute_id: a.attributeId, quarters_back: 1,
+      company_id: companyId, attribute_id: a.attributeId, quarters_back: a.fell !== null ? 2 : 1,
       ...(locationKey ? { location: locationKey } : {}),
     });
-    return `### ${a.name}\n${json.slice(0, 12000)}`;
+    const head = a.fell !== null ? `### ${a.name} (sentiment down ${a.fell} points; this quarter and last)` : `### ${a.name}`;
+    return `${head}\n${json.slice(0, 12000)}`;
   }));
   return blocks.join('\n\n');
 }

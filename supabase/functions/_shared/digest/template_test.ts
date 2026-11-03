@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
 import { digestSubject, renderDigestHtml, sentimentBadge } from './template.ts';
 import { coverageRows, describeLocation, displayMarket, filterActions, groupRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
-import { cap, capTitle, digestMarkdown, narrativeFromReply, validateNarrative } from './narrative.ts';
+import { cap, capTitle, digestMarkdown, evidenceAttributes, narrativeFromReply, validateNarrative } from './narrative.ts';
 import type { DigestPayload } from './types.ts';
 import { bandLabel } from '../px-tools/bands.ts';
 
@@ -278,4 +278,29 @@ Deno.test('a callout title over the limit ends at a clause break with no full st
   assert(threw.includes('1 callout title'));
   const lenient = validateNarrative(raw, payload, { lenient: true });
   assert(lenient.callouts[0].title.length <= 80 && !lenient.callouts[0].title.endsWith('.'));
+});
+
+Deno.test('prose that says "naming" or names an AI assistant is sent back once', () => {
+  const ok = { preheader: 'p', action: 'a', callouts: [{ title: 't', body: 'Visibility is 69%.' }, { title: 'u', body: 'b' }] };
+  validateNarrative(ok, payload);
+  for (const bad of ['Naming fell in all three.', 'Data Insights is named in 69% of answers.', 'The fall came from Google AI Mode.']) {
+    let threw = '';
+    try { validateNarrative({ ...ok, callouts: [{ title: 't', body: bad }, { title: 'u', body: 'b' }] }, payload); } catch (e) { threw = (e as Error).message; }
+    assert(threw.includes('visibility'), bad);
+  }
+  validateNarrative({ ...ok, action: 'AI names Ford in 31% of answers.' }, payload);
+});
+
+Deno.test('the evidence covers the attributes that fell most, as well as the weakest', () => {
+  const attrs = [
+    { attributeId: 'career-opportunities', name: 'Career Opportunities', raisedPct: 30, positivePct: 72, delta: -4 },
+    { attributeId: 'company-culture', name: 'Company Culture', raisedPct: 27, positivePct: 90, delta: -5 },
+    { attributeId: 'innovation', name: 'Innovation', raisedPct: 18, positivePct: 92, delta: -5 },
+    { attributeId: 'compensation', name: 'Compensation', raisedPct: 13, positivePct: 76, delta: -4 },
+    { attributeId: 'interview-experience', name: 'Interview Experience', raisedPct: 14, positivePct: 92, delta: 3 },
+  ];
+  const ev = evidenceAttributes({ ...payload, sentimentChangeHidden: false, attributes: attrs as any });
+  assertEquals(ev.map(a => a.attributeId), ['company-culture', 'innovation', 'career-opportunities', 'compensation']);
+  assertEquals(ev[0].fell, 5);
+  assertEquals(ev[2].fell, null);
 });
