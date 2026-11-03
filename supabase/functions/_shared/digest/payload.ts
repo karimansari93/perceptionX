@@ -14,6 +14,10 @@ import { resolveScope } from '../px-tools/scope.ts';
 import type { ResolvedScope, ToolContext } from '../px-tools/scope.ts';
 import { CLAUDE_PUBLISHED_OR, EXCLUDED_AI_MODELS_FILTER, monthToQuarter, pct, pointsDelta, sentimentPct } from '../px-tools/helpers.ts';
 import { REGIONS, regionFromKey } from '../regions.ts';
+import { buildSourceLines, sourceDisplayName } from '../source-platforms.ts';
+import type { OwnedEntry } from '../source-platforms.ts';
+import { readLineCounts, readOwnedEntries } from '../px-tools/source-lines.ts';
+import type { DomainStatRow } from '../px-tools/source-lines.ts';
 import type { DigestActionRow, DigestAttributeRow, DigestBarRow, DigestGroupRow, DigestPayload } from './types.ts';
 
 export interface DigestView {
@@ -136,15 +140,23 @@ function monthsOfQuarter(r: ResolvedScope, quarter: string): string[] {
   return r.months.filter(m => monthToQuarter(m) === quarter);
 }
 
-async function domainCounts(ctx: ToolContext, r: ResolvedScope, quarter: string) {
+// Every host cited in the quarter, as the domain cube spells it. The limit is
+// the RPC's maximum so a platform's long-tail country sites are not cut off
+// before they are folded into the platform's line.
+async function domainRows(ctx: ToolContext, r: ResolvedScope, quarter: string): Promise<DomainStatRow[]> {
   const months = monthsOfQuarter(r, quarter);
-  if (!months.length) return [] as Array<{ key: string; quarter: string; count: number }>;
+  if (!months.length) return [];
   const { data, error } = await ctx.admin.rpc('mcp_get_domain_stats', {
     p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_job_functions: r.jobFunctions,
-    p_months: months, p_limit: 200,
+    p_months: months, p_limit: 1000,
   });
   if (error) throw new Error(`Domain stats read failed: ${error.message}`);
-  return ((data?.rows || []) as any[]).map(row => ({ key: String(row.domain), quarter, count: row.responses_citing || 0 }));
+  return ((data?.rows || []) as any[]).map(row => ({
+    domain: String(row.domain),
+    responses_citing: row.responses_citing || 0,
+    mentioned_responses_citing: row.mentioned_responses_citing || 0,
+    citation_count: row.citation_count || 0,
+  }));
 }
 
 // Employers named on the open "which employers should I consider" questions
@@ -189,30 +201,10 @@ async function discoveryCounts(ctx: ToolContext, r: ResolvedScope, quarter: stri
   return { answers: all.count || 0, mentioned: named.error ? 0 : (named.count || 0) };
 }
 
-// Pretty name for a source domain: a known site's brand, else the domain.
-const SOURCE_NAMES: Record<string, string> = {
-  'linkedin.com': 'LinkedIn', 'glassdoor.com': 'Glassdoor', 'indeed.com': 'Indeed', 'reddit.com': 'Reddit',
-  'youtube.com': 'YouTube', 'ambitionbox.com': 'AmbitionBox', 'teamblind.com': 'Blind', 'levels.fyi': 'Levels.fyi',
-  'builtin.com': 'Built In', 'comparably.com': 'Comparably', 'wikipedia.org': 'Wikipedia', 'greatplacetowork.com': 'Great Place to Work',
-  'quora.com': 'Quora', 'x.com': 'X', 'facebook.com': 'Facebook', 'instagram.com': 'Instagram', 'kununu.com': 'Kununu',
-};
-const TLD_COUNTRY: Record<string, string> = {
-  'co.uk': 'UK', 'co.in': 'India', 'de': 'Germany', 'fr': 'France', 'nl': 'Netherlands', 'pl': 'Poland', 'es': 'Spain',
-  'it': 'Italy', 'ie': 'Ireland', 'ca': 'Canada', 'com.au': 'Australia', 'sg': 'Singapore', 'com.br': 'Brazil',
-  'com.mx': 'Mexico', 'ch': 'Switzerland', 'at': 'Austria', 'be': 'Belgium', 'se': 'Sweden', 'jp': 'Japan',
-};
-// "glassdoor.co.uk" → "Glassdoor UK": a known site's regional edition keeps
-// the site's name and says which edition it is.
-export const sourceName = (domain: string): string => {
-  if (SOURCE_NAMES[domain]) return SOURCE_NAMES[domain];
-  const m = domain.match(/^([a-z0-9-]+)\.((?:co|com)\.[a-z]{2}|[a-z]{2})$/);
-  if (m) {
-    const root = SOURCE_NAMES[`${m[1]}.com`];
-    const country = TLD_COUNTRY[m[2]];
-    if (root && country) return `${root} ${country}`;
-  }
-  return domain;
-};
+// Pretty name for a source: a platform's name (one per platform, whichever
+// country site was cited), else the host. The rule is shared with every
+// other surface: see ../source-platforms.ts.
+export const sourceName = (domain: string): string => sourceDisplayName(domain);
 
 // Tracked market spellings carry a leading article in some data sets
 // ("the Netherlands"); the email shows the name without it.
@@ -275,13 +267,15 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
     ? groupRows(stats, row => String(row.location_context || ''), latestQ, previousQ)
     : [];
 
-  const [domainsLatest, domainsPrev, discLatest, discPrev, ownedRes] = await Promise.all([
-    domainCounts(ctx, r, latestQ),
-    previousQ ? domainCounts(ctx, r, previousQ) : Promise.resolve([]),
+  const [domainsLatest, domainsPrev, discLatest, discPrev, ownedRead] = await Promise.all([
+    domainRows(ctx, r, latestQ),
+    previousQ ? domainRows(ctx, r, previousQ) : Promise.resolve([] as DomainStatRow[]),
     discoveryCounts(ctx, r, latestQ),
     previousQ ? discoveryCounts(ctx, r, previousQ) : Promise.resolve({ answers: 0, mentioned: 0 }),
-    ctx.admin.from('company_owned_domains').select('domain').in('company_id', r.scope.companyIds),
+    readOwnedEntries(ctx, r.scope.companyIds),
   ]);
+  if (ownedRead.error) throw new Error(`Owned domains read failed: ${ownedRead.error}`);
+  const ownedEntries: OwnedEntry[] = ownedRead.entries;
   // Employers: discovery questions when the view has them, else all answers.
   const onDiscovery = discLatest.answers > 0;
   const [compLatest, compPrev] = await Promise.all([
@@ -295,21 +289,48 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
   const youPrev = onDiscovery
     ? (previousQ && discPrev.answers > 0 ? pct(discPrev.mentioned, discPrev.answers) : null)
     : (previous ? previous.visibility_pct : null);
-  const owned = new Set<string>(((ownedRes.data || []) as any[]).map(d => String(d.domain).toLowerCase().replace(/^www\./, '')));
-  const isOwned = (domain: string) => owned.has(domain) || Array.from(owned).some(o => domain.endsWith(`.${o}`) || o.endsWith(`.${domain}`));
-
-  const sources: DigestBarRow[] = coverageRows(domainsLatest.concat(domainsPrev), totals, latestQ, previousQ)
-    .filter(s => s.pct >= MIN_SOURCE_PCT)
-    .slice(0, TOP_SOURCES)
-    .map(s => ({ domain: s.key, name: sourceName(s.key), pct: s.pct, delta: s.delta, owned: isOwned(s.key) }));
+  // Sources: one line per platform (country sites folded in), a platform the
+  // client owns pages on split into "your pages and posts" and "other".
+  // Coverage of a merged or split line is a union of answers, never a sum.
+  const answersLatest = totals.get(latestQ) || 0;
+  const answersPrev = previousQ ? (totals.get(previousQ) || 0) : 0;
+  const plannedLines = buildSourceLines(domainsLatest.concat(domainsPrev).map(d => d.domain), ownedEntries);
+  const latestRead = await readLineCounts(ctx, r, {
+    months: monthsOfQuarter(r, latestQ), lines: plannedLines, domainRows: domainsLatest, owned: ownedEntries,
+    answersInScope: answersLatest, minAnswers: Math.ceil((answersLatest * MIN_SOURCE_PCT) / 100), strict: true,
+  });
+  const latestRows = latestRead.lines.map(l => ({ key: l.key, quarter: latestQ, count: latestRead.counts.get(l.key)?.citing || 0 }));
+  const shownKeys = new Set(
+    coverageRows(latestRows, totals, latestQ, null)
+      .filter(s => s.pct >= MIN_SOURCE_PCT).slice(0, TOP_SOURCES).map(s => s.key),
+  );
+  const shownLines = latestRead.lines.filter(l => shownKeys.has(l.key));
+  const prevRead = previousQ && shownLines.length
+    ? await readLineCounts(ctx, r, {
+      months: monthsOfQuarter(r, previousQ), lines: shownLines, domainRows: domainsPrev, owned: ownedEntries,
+      answersInScope: answersPrev, strict: true,
+    })
+    : null;
+  const sourceRows = shownLines.flatMap(l => [
+    { key: l.key, quarter: latestQ, count: latestRead.counts.get(l.key)?.citing || 0 },
+    ...(prevRead && previousQ ? [{ key: l.key, quarter: previousQ, count: prevRead.counts.get(l.key)?.citing || 0 }] : []),
+  ]);
+  const lineByKey = new Map(shownLines.map(l => [l.key, l]));
+  const sources: DigestBarRow[] = coverageRows(sourceRows, totals, latestQ, previousQ)
+    .map(s => {
+      const line = lineByKey.get(s.key)!;
+      return { domain: line.domain, name: line.name, pct: s.pct, delta: s.delta, owned: line.owned };
+    });
 
   const brandLower = r.scope.brandName.trim().toLowerCase();
   const employers: DigestBarRow[] = coverageRows(compLatest.concat(compPrev), employerTotals, latestQ, previousQ)
     .filter(c => c.key.trim().toLowerCase() !== brandLower && c.pct > 0)
     .slice(0, TOP_EMPLOYERS)
     .map(c => ({ domain: competitorDomain(c.key), name: c.key, pct: c.pct, delta: c.delta }));
-  const ownedList = Array.from(owned).sort((a, b) => a.length - b.length);
-  const brandDomain = ownedList[0] ?? null;
+  // The brand's mark comes from its shortest whole-host entry; page entries
+  // ("linkedin.com/company/x") are never a brand domain.
+  const ownedHosts = ownedEntries.flatMap(e => (e.kind === 'domain' ? [e.host] : [])).sort((a, b) => a.length - b.length);
+  const brandDomain = ownedHosts[0] ?? null;
   if (youPct !== null) {
     employers.push({
       domain: brandDomain ?? competitorDomain(r.scope.brandName), name: r.scope.brandName,

@@ -1,4 +1,5 @@
 import { EMPLOYMENT_SOURCES, SourceConfig } from './sourceConfig';
+import { canonicalHost } from './sourcePlatforms';
 
 export interface EnhancedCitation {
   domain: string;
@@ -139,29 +140,13 @@ const isDomainMissing = (domain: string): boolean => {
   return d === '' || d === 'unknown';
 };
 
-// Helper to normalize domain names for consistent comparison
+// Helper to normalize domain names for consistent comparison. One platform is
+// one source (in.linkedin.com and linkedin.com are both linkedin.com); every
+// other host keeps its own name, so a client's own domains stay separate. The
+// rule is shared with the email and the Ask AI tools: see sourcePlatforms.ts.
 const normalizeDomain = (domain: string): string => {
   if (!domain) return '';
-  
-  // Remove www. prefix and convert to lowercase
-  let normalized = domain.toLowerCase().replace(/^www\./, '');
-  
-  // Handle common variations and country-specific domains
-  if (normalized.endsWith('.co.in')) {
-    normalized = normalized.replace('.co.in', '.com');
-  } else if (normalized.endsWith('.co.uk')) {
-    normalized = normalized.replace('.co.uk', '.com');
-  } else if (normalized.endsWith('.com.au')) {
-    normalized = normalized.replace('.com.au', '.com');
-  } else if (normalized.endsWith('.ca')) {
-    normalized = normalized.replace('.ca', '.com');
-  } else if (normalized.endsWith('.de')) {
-    normalized = normalized.replace('.de', '.com');
-  } else if (normalized.endsWith('.fr')) {
-    normalized = normalized.replace('.fr', '.com');
-  }
-  
-  return normalized;
+  return canonicalHost(domain);
 };
 
 // Map common source names to their canonical domains

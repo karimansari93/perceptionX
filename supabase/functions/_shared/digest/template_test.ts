@@ -155,9 +155,13 @@ Deno.test('cap cuts at a sentence end, never mid-sentence', () => {
 
 Deno.test('display names', () => {
   assertEquals(displayMarket('the Netherlands'), 'Netherlands');
-  assertEquals(sourceName('glassdoor.co.uk'), 'Glassdoor UK');
-  assertEquals(sourceName('indeed.de'), 'Indeed Germany');
+  // One platform, one name: country sites are not separate sources.
+  assertEquals(sourceName('glassdoor.co.uk'), 'Glassdoor');
+  assertEquals(sourceName('glassdoor.co.in'), 'Glassdoor');
+  assertEquals(sourceName('indeed.de'), 'Indeed');
+  assertEquals(sourceName('in.linkedin.com'), 'LinkedIn');
   assertEquals(sourceName('about.netflix.com'), 'about.netflix.com');
+  assertEquals(sourceName('careers.ford.com'), 'careers.ford.com');
   assertEquals(describeLocation('set:the netherlands|poland', ['the Netherlands', 'Poland']), { label: 'Netherlands, Poland', preposition: 'across' });
 });
 

@@ -50,6 +50,11 @@ const tables: Record<string, any[]> = {
   ],
   competitor_themes: [],
   prompt_responses: [],
+  // The same entries sit on every sibling company; the tools read them once.
+  company_owned_domains: [
+    { company_id: FORD_US, domain: 'careers.ford.com' },
+    { company_id: FORD_IN, domain: 'careers.ford.com' },
+  ],
 };
 
 // Scope stats: one wave assigned to April (US + India), one in July. No May,
@@ -239,6 +244,7 @@ class FakeQuery {
   limit(n: number) { this.rows = this.rows.slice(0, n); return this; }
   ilike() { return this; }
   not() { return this; }
+  or() { return this; }
   eq(col: string, v: any) { if (!col.includes('.')) this.rows = this.rows.filter(r => r[col] === v); return this; }
   in(col: string, vs: any[]) { if (!col.includes('.')) this.rows = this.rows.filter(r => vs.includes(r[col])); return this; }
   maybeSingle() { return Promise.resolve({ data: this.rows[0] ?? null, error: null }); }
@@ -347,7 +353,7 @@ Deno.test('get_attribute_themes: % of answers leads, retired ids hidden, sources
   assertEquals(w.change_vs_previous_period.sentiment_points, -16);
   assertEquals(w.sample_size.answers_mentioning, 645);
   assertEquals(p.sources_in_attribute_answers.sources[0], {
-    domain: 'glassdoor.com', cited_in_pct_of_attribute_answers: 40,
+    domain: 'glassdoor.com', owned: false, cited_in_pct_of_attribute_answers: 40,
     top_pages: [{
       url: 'https://www.glassdoor.com/Reviews/Ford-Motor-Company-Reviews-E263.htm', title: 'Ford Motor Company Reviews | Glassdoor',
       cited_in_pct_of_attribute_answers: 26, sample_size: { answers_citing: 90 },
@@ -484,6 +490,29 @@ Deno.test('get_sources: every domain carries its most-cited pages for linking', 
   }]);
   assertEquals(Object.keys(ford).indexOf('top_pages') < Object.keys(ford).indexOf('sample_size'), true);
   assertStringIncludes(s._meta.methodology.join(' '), 'top_pages');
+  // Ownership and platform grouping ride on every source line.
+  assertEquals(ford.owned, true);
+  assertEquals(ford.name, 'careers.ford.com');
+  assertEquals(s.sources.find((x: any) => x.domain === 'glassdoor.com').owned, false);
+  assertEquals(s.sources.find((x: any) => x.domain === 'glassdoor.com').name, 'Glassdoor');
+  assertStringIncludes(s._meta.methodology.join(' '), 'One platform is one source');
+});
+
+Deno.test('get_citations: a domain filter finds a platform by name or by any site folded into it', async () => {
+  const byName = await call('get_citations', { company_id: FORD_US, domain_filter: 'glassdoor' });
+  const byHost = await call('get_citations', { company_id: FORD_US, domain_filter: 'glassdoor.com' });
+  assertEquals(byName.citations.map((c: any) => c.name), ['Glassdoor']);
+  assertEquals(byHost.citations.map((c: any) => c.name), ['Glassdoor']);
+  assertEquals(byName.citations[0].owned, false);
+});
+
+Deno.test('get_attribute_themes: attribute sources carry an owned flag and say rows are single sites', async () => {
+  const p = await call('get_attribute_themes', { company_id: FORD_US, attribute_id: 'wellbeing-balance', quarters_back: 4 });
+  lint('get_attribute_themes', p);
+  const rows = p.sources_in_attribute_answers.sources;
+  assertEquals(rows.find((x: any) => x.domain === 'careers.ford.com').owned, true);
+  assertEquals(rows.find((x: any) => x.domain === 'glassdoor.com').owned, false);
+  assertStringIncludes(p.sources_in_attribute_answers.note, 'never add their percentages');
 });
 
 Deno.test('job function: matched like markets, periods follow the filter, splits regroup the cube rows', async () => {
