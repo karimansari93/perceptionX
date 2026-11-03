@@ -318,6 +318,11 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
   }
   // The client sits where its share puts it, not at the bottom.
   employers.sort((a, b) => b.pct - a.pct);
+  // Readers took a low share here as alarming (Sreesha, 2026-11-03). Say what
+  // drives it, so the figure reads as a lever rather than a verdict.
+  const employersContext = onDiscovery
+    ? 'AI builds these shortlists mostly from employer rankings and award lists, so a place on the lists AI reads is what moves this figure.'
+    : null;
   const employersNote = onDiscovery
     ? 'Share of answers to open employer questions (candidates asking which employers to consider) that name each employer'
     : 'Share of all answers that mention each employer';
@@ -343,7 +348,7 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
       ? `Change since ${previousLabel} compares this quarter's collection with the previous one, as the dashboard does.`
       : 'This is the first collection for this view, so there is no change to show yet.',
     sentimentChangeHidden: false,
-    byFunction, byMarket, employers, employersNote, sources, attributes, actions,
+    byFunction, byMarket, employers, employersNote, employersContext, sources, attributes, actions,
     narrative: null,
     chatUrl: view.chatUrl,
     chatNote: view.chatNote,

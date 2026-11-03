@@ -21,6 +21,7 @@
 //      DIGEST_REPLY_TO, APP_URL (https://app.perceptionx.ai), DIGEST_ASSET_URL (images; defaults
 //      to APP_URL), LOGO_DEV_TOKEN, CLAUDE_API_KEY.
 
+import { inlineImages } from './inline-images.ts';
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
@@ -115,10 +116,11 @@ async function createDigestChat(
 async function sendEmail(to: string, subject: string, html: string): Promise<string> {
   const key = Deno.env.get('RESEND_API_KEY');
   if (!key) throw new Error('RESEND_API_KEY is not set.');
+  const { html: inlined, attachments } = await inlineImages(html);
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: FROM, to: [to], reply_to: REPLY_TO, subject, html }),
+    body: JSON.stringify({ from: FROM, to: [to], reply_to: REPLY_TO, subject, html: inlined, attachments }),
   });
   if (!res.ok) throw new Error(`Resend API error (${res.status}): ${await res.text()}`);
   const body = await res.json().catch(() => ({}));

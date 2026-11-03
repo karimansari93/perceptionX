@@ -119,6 +119,8 @@ export interface DigestPayload {
   employers: DigestBarRow[];
   /** What the employers shares are measured on, for the section subtitle and the prose. */
   employersNote: string;
+  /** One sentence on what drives the employers list, shown under its note; null when not needed. */
+  employersContext?: string | null;
   sources: DigestBarRow[];
   attributes: DigestAttributeRow[];
   /** Published report actions for this reader's markets (organisation-wide ones included). */
