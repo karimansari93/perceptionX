@@ -14,8 +14,13 @@ second grouping rule anywhere.
   `PLATFORMS`. A host folds when its registrable label is a registered
   platform and its suffix is `.com`, one of the platform's own suffixes, or a
   country suffix. Any subdomain folds with it.
-- **Everything else stays its own host.** `careers.ford.com`, `india.ford.com`
-  and `ford.de` are never merged with each other or with anything else.
+- **Every platform the dashboard knows folds** (about 90: review sites, job boards, social). The registry mirrors the dashboard's cards.
+- **Other sites fold only by country.** A leading country-code subdomain
+  (`de.nytimes.com`) and country or `.com` variants of the same name
+  (`bbc.co.uk`, `bbc.com`) become one line. Any other subdomain is kept:
+  `support.google.com`, `docs.google.com` and `google.com` stay three lines.
+- **Hosts the client owns are never folded.** `careers.ford.com`,
+  `india.ford.com`, `ford.com` and `ford.de` stay separate lines.
 - To add a platform, add it to `PLATFORMS` (and to the matching list in
   `src/utils/sourceConfig.ts` or `SourcesTab.tsx` if the dashboard shows it
   as a card; `sourcePlatforms.test.ts` fails if the two disagree on a logo

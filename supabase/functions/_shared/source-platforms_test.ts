@@ -203,3 +203,35 @@ Deno.test('owned pages: characters in a pattern are literal except "*", and a wi
   // The rule carries the pattern the SQL union applies, so both sides agree.
   assertEquals(pathRule('/*-e152871').regex, '^/.*-e152871(?![a-z0-9])');
 });
+
+Deno.test('all data: every registered platform folds, not just LinkedIn and Glassdoor', () => {
+  for (const [host, key] of [
+    ['kununu.de', 'kununu'], ['at.kununu.com', 'kununu'], ['www.naukri.com', 'naukri'], ['naukrigulf.com', 'naukri'],
+    ['de.indeed.com', 'indeed'], ['openwork.jp', 'openwork'], ['uk.reddit.com', 'reddit'], ['m.youtube.com', 'youtube'],
+    ['fr.wikipedia.org', 'wikipedia'], ['stepstone.fr', 'stepstone'], ['seek.co.nz', 'seek'], ['jobs.ch', 'jobsch'],
+    ['twitter.com', 'x'], ['t.co', 'x'], ['lnkd.in', 'linkedin'], ['cz.jooble.org', 'cz.jooble.org'],
+  ] as const) assertEquals(sourceIdentity(host).key, key, host);
+});
+
+Deno.test('all data: unregistered sites fold by country, never by dropping a subdomain', () => {
+  const lines = buildSourceLines(
+    ['bbc.co.uk', 'bbc.com', 'news.bbc.co.uk', 'de.nytimes.com', 'nytimes.com', 'support.google.com', 'docs.google.com', 'google.com', 'example.io'],
+    [],
+  );
+  const byKey = new Map(lines.map(l => [l.key, l]));
+  assertEquals(byKey.get('family:bbc')?.members, ['bbc.co.uk', 'bbc.com']);
+  assertEquals(byKey.get('family:bbc')?.domain, 'bbc.com');
+  assertEquals(byKey.get('family:bbc')?.needsUnion, true);
+  assertEquals(byKey.get('news.bbc.co.uk')?.members, ['news.bbc.co.uk']);   // a different subdomain is its own line
+  assertEquals(byKey.get('family:nytimes')?.members, ['de.nytimes.com', 'nytimes.com']);
+  for (const k of ['support.google.com', 'docs.google.com', 'google.com', 'example.io']) assert(byKey.has(k), k);
+});
+
+Deno.test('all data: hosts the client owns are never folded', () => {
+  const owned = parseOwnedEntries(['ford.com', 'ford.de']);
+  const lines = buildSourceLines(['ford.com', 'ford.de', 'ford.co.uk', 'fordpro.com', 'careers.ford.com', 'india.ford.com'], owned);
+  const keys = lines.map(l => l.key).sort();
+  assertEquals(keys, ['careers.ford.com', 'india.ford.com', 'ford.co.uk', 'ford.com', 'ford.de', 'fordpro.com'].sort());
+  assertEquals(lines.find(l => l.key === 'ford.de')?.owned, true);
+  assertEquals(lines.find(l => l.key === 'ford.co.uk')?.owned, false);
+});

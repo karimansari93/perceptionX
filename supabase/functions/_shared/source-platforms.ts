@@ -13,9 +13,12 @@
 //   platform AND its suffix is .com, one of the platform's own extra
 //   suffixes, or a country suffix (.in, .co.uk, .com.au, ...). Any subdomain
 //   of a platform folds with it.
-//   Everything else stays as its own host, so a client's own domains
-//   (careers.ford.com, india.ford.com) never merge with each other or with
-//   anything else. New platforms are added to PLATFORMS below.
+//   Sites that are not registered fold only by country: a leading
+//   country-code subdomain (de.example.com) and country or .com variants of
+//   the same name (example.de, example.co.uk, example.com) become one line.
+//   Hosts a client owns are never folded, and other subdomains are never
+//   dropped, so careers.ford.com, india.ford.com and ford.com stay separate
+//   lines. New platforms are added to PLATFORMS below.
 //
 // OWNERSHIP
 //   An owned entry (company_owned_domains.domain) is either
@@ -42,53 +45,117 @@
 // Pure TypeScript, no imports: it runs in Deno (edge functions) and Vite.
 
 export interface PlatformDef {
-  /** Stable key, also the registrable label ("linkedin"). */
+  /** Stable key. */
   key: string;
   /** Name shown to people. */
   name: string;
   /** Canonical host: logo lookups and the merged line's domain. */
   domain: string;
+  /** Registrable labels that are this platform under .com or any country suffix. */
+  labels: string[];
+  /** Hosts (and their subdomains) that belong to the platform whatever their label. */
+  hosts: string[];
   /** Extra generic suffixes besides .com ("org" for wikipedia.org). */
   suffixes?: string[];
-  /** Hosts that belong to the platform but do not follow the label rule. */
-  hosts?: string[];
 }
 
+// Mirrors the dashboard's employer-review and social platform cards
+// (src/utils/sourceConfig.ts, SourcesTab.tsx); sourcePlatforms.test.ts fails
+// if the two disagree on a name's logo domain. A bare token there is a label
+// here; a dotted token is a host.
 export const PLATFORMS: PlatformDef[] = [
-  { key: 'linkedin', name: 'LinkedIn', domain: 'linkedin.com', hosts: ['lnkd.in'] },
-  { key: 'glassdoor', name: 'Glassdoor', domain: 'glassdoor.com' },
-  { key: 'indeed', name: 'Indeed', domain: 'indeed.com' },
-  { key: 'ambitionbox', name: 'AmbitionBox', domain: 'ambitionbox.com' },
-  { key: 'naukri', name: 'Naukri', domain: 'naukri.com' },
-  { key: 'monster', name: 'Monster', domain: 'monster.com' },
-  { key: 'ziprecruiter', name: 'ZipRecruiter', domain: 'ziprecruiter.com' },
-  { key: 'simplyhired', name: 'SimplyHired', domain: 'simplyhired.com' },
-  { key: 'careerbuilder', name: 'CareerBuilder', domain: 'careerbuilder.com' },
-  { key: 'jobstreet', name: 'JobStreet', domain: 'jobstreet.com' },
-  { key: 'seek', name: 'Seek', domain: 'seek.com.au' },
-  { key: 'stepstone', name: 'StepStone', domain: 'stepstone.de' },
-  { key: 'xing', name: 'XING', domain: 'xing.com' },
-  { key: 'kununu', name: 'Kununu', domain: 'kununu.com' },
-  { key: 'payscale', name: 'PayScale', domain: 'payscale.com' },
-  { key: 'comparably', name: 'Comparably', domain: 'comparably.com' },
-  { key: 'teamblind', name: 'Blind', domain: 'teamblind.com' },
-  { key: 'levels', name: 'Levels.fyi', domain: 'levels.fyi', hosts: ['levels.fyi'] },
-  { key: 'builtin', name: 'Built In', domain: 'builtin.com' },
-  { key: 'greatplacetowork', name: 'Great Place to Work', domain: 'greatplacetowork.com' },
-  { key: 'reddit', name: 'Reddit', domain: 'reddit.com', hosts: ['redd.it'] },
-  { key: 'quora', name: 'Quora', domain: 'quora.com' },
-  { key: 'medium', name: 'Medium', domain: 'medium.com' },
-  { key: 'youtube', name: 'YouTube', domain: 'youtube.com', hosts: ['youtu.be'] },
-  { key: 'facebook', name: 'Facebook', domain: 'facebook.com', hosts: ['fb.com', 'fb.me'] },
-  { key: 'instagram', name: 'Instagram', domain: 'instagram.com' },
-  { key: 'tiktok', name: 'TikTok', domain: 'tiktok.com' },
-  // "x" is too short to match by label ("x.co" is a link shortener).
-  { key: 'x', name: 'X', domain: 'x.com', hosts: ['x.com', 'twitter.com', 't.co'] },
-  { key: 'wikipedia', name: 'Wikipedia', domain: 'wikipedia.org', suffixes: ['org'] },
+  { key: 'glassdoor', name: 'Glassdoor', domain: 'glassdoor.com', labels: ['glassdoor'], hosts: ['glassdoor.com'] },
+  { key: 'indeed', name: 'Indeed', domain: 'indeed.com', labels: ['indeed'], hosts: ['indeed.com'] },
+  { key: 'ambitionbox', name: 'AmbitionBox', domain: 'ambitionbox.com', labels: ['ambitionbox'], hosts: ['ambitionbox.com'] },
+  { key: 'kununu', name: 'Kununu', domain: 'kununu.com', labels: ['kununu'], hosts: ['kununu.com'] },
+  { key: 'comparably', name: 'Comparably', domain: 'comparably.com', labels: ['comparably'], hosts: ['comparably.com'] },
+  { key: 'blind', name: 'Blind', domain: 'teamblind.com', labels: ['teamblind'], hosts: ['teamblind.com'] },
+  { key: 'fishbowl', name: 'Fishbowl', domain: 'fishbowlapp.com', labels: ['fishbowlapp'], hosts: ['fishbowlapp.com'] },
+  { key: 'levelsfyi', name: 'Levels.fyi', domain: 'levels.fyi', labels: [], hosts: ['levels.fyi'] },
+  { key: 'themuse', name: 'The Muse', domain: 'themuse.com', labels: ['themuse'], hosts: ['themuse.com'] },
+  { key: 'seek', name: 'Seek', domain: 'seek.com.au', labels: ['seek'], hosts: ['seek.com.au'] },
+  { key: 'greatplacetowork', name: 'Great Place to Work', domain: 'greatplacetowork.com', labels: ['greatplacetowork', 'gptw'], hosts: ['greatplacetowork.com'] },
+  { key: 'builtin', name: 'Built In', domain: 'builtin.com', labels: ['builtin'], hosts: ['builtin.com'] },
+  { key: 'vault', name: 'Vault', domain: 'vault.com', labels: [], hosts: ['vault.com'] },
+  { key: 'fairygodboss', name: 'FairyGodBoss', domain: 'fairygodboss.com', labels: ['fairygodboss'], hosts: ['fairygodboss.com'] },
+  { key: 'careerbliss', name: 'CareerBliss', domain: 'careerbliss.com', labels: ['careerbliss'], hosts: ['careerbliss.com'] },
+  { key: 'inhersight', name: 'InHerSight', domain: 'inhersight.com', labels: ['inhersight'], hosts: ['inhersight.com'] },
+  { key: 'jobcase', name: 'JobCase', domain: 'jobcase.com', labels: ['jobcase'], hosts: ['jobcase.com'] },
+  { key: 'wayup', name: 'WayUp', domain: 'wayup.com', labels: ['wayup'], hosts: ['wayup.com'] },
+  { key: 'zippia', name: 'Zippia', domain: 'zippia.com', labels: ['zippia'], hosts: ['zippia.com'] },
+  { key: 'ziprecruiter', name: 'ZipRecruiter', domain: 'ziprecruiter.com', labels: ['ziprecruiter'], hosts: ['ziprecruiter.com'] },
+  { key: 'monster', name: 'Monster', domain: 'monster.com', labels: [], hosts: ['monster.com'] },
+  { key: 'careerbuilder', name: 'CareerBuilder', domain: 'careerbuilder.com', labels: ['careerbuilder'], hosts: ['careerbuilder.com'] },
+  { key: 'simplyhired', name: 'SimplyHired', domain: 'simplyhired.com', labels: ['simplyhired'], hosts: ['simplyhired.com'] },
+  { key: 'dice', name: 'Dice', domain: 'dice.com', labels: [], hosts: ['dice.com'] },
+  { key: 'naukri', name: 'Naukri', domain: 'naukri.com', labels: ['naukri', 'naukrigulf'], hosts: ['naukri.com'] },
+  { key: 'jobstreet', name: 'JobStreet', domain: 'jobstreet.com', labels: ['jobstreet'], hosts: ['jobstreet.com'] },
+  { key: 'stepstone', name: 'StepStone', domain: 'stepstone.de', labels: ['stepstone'], hosts: ['stepstone.de'] },
+  { key: 'welcometothejungle', name: 'Welcome to the Jungle', domain: 'welcometothejungle.com', labels: ['welcometothejungle'], hosts: ['welcometothejungle.com'] },
+  { key: 'thejobcrowd', name: 'The Job Crowd', domain: 'thejobcrowd.com', labels: ['thejobcrowd'], hosts: ['thejobcrowd.com'] },
+  { key: 'ratemyemployer', name: 'Rate My Employer', domain: 'ratemyemployer.com', labels: ['ratemyemployer'], hosts: ['ratemyemployer.com'] },
+  { key: 'openwork', name: 'OpenWork', domain: 'openwork.jp', labels: [], hosts: ['en-hyouban.com', 'openwork.jp'] },
+  { key: 'jobtalk', name: 'JobTalk', domain: 'jobtalk.jp', labels: ['jobtalk'], hosts: ['jobtalk.jp'] },
+  { key: 'syukatsukaigi', name: 'Syukatsu Kaigi', domain: 'syukatsu-kaigi.jp', labels: [], hosts: ['syukatsu-kaigi.jp'] },
+  { key: 'onecareer', name: 'ONE CAREER', domain: 'onecareer.jp', labels: ['onecareer'], hosts: ['onecareer.jp'] },
+  { key: 'jobplanet', name: 'JobPlanet', domain: 'jobplanet.co.kr', labels: ['jobplanet'], hosts: ['jobplanet.co.kr'] },
+  { key: 'jobkorea', name: 'JobKorea', domain: 'jobkorea.co.kr', labels: ['jobkorea'], hosts: ['jobkorea.co.kr'] },
+  { key: 'goworkpl', name: 'GoWork.pl', domain: 'gowork.pl', labels: ['gowork'], hosts: ['gowork.pl'] },
+  { key: 'undelucram', name: 'Undelucram', domain: 'undelucram.ro', labels: ['undelucram'], hosts: ['undelucram.ro'] },
+  { key: 'professionhu', name: 'Profession.hu', domain: 'profession.hu', labels: [], hosts: ['profession.hu'] },
+  { key: 'wherewework', name: 'Where We Work', domain: 'wherewework.hu', labels: ['wherewework'], hosts: ['wherewework.hu'] },
+  { key: 'choosemycompany', name: 'ChooseMyCompany', domain: 'choosemycompany.com', labels: ['choosemycompany'], hosts: ['choosemycompany.com'] },
+  { key: 'infojobs', name: 'InfoJobs', domain: 'infojobs.com.br', labels: ['infojobs'], hosts: ['infojobs.com.br'] },
+  { key: 'mercotalento', name: 'Merco Talento', domain: 'merco.info', labels: [], hosts: ['merco.info'] },
+  { key: 'computrabajo', name: 'Computrabajo', domain: 'computrabajo.com', labels: ['computrabajo'], hosts: ['computrabajo.com'] },
+  { key: 'bumeran', name: 'Bumeran', domain: 'bumeran.com', labels: ['bumeran'], hosts: ['bumeran.com'] },
+  { key: 'elempleo', name: 'elempleo', domain: 'elempleo.com', labels: ['elempleo'], hosts: ['elempleo.com'] },
+  { key: 'occmundial', name: 'OCC Mundial', domain: 'occ.com.mx', labels: [], hosts: ['occ.com.mx'] },
+  { key: 'catho', name: 'Catho', domain: 'catho.com.br', labels: [], hosts: ['catho.com.br'] },
+  { key: 'vagas', name: 'Vagas', domain: 'vagas.com.br', labels: [], hosts: ['vagas.com.br'] },
+  { key: 'workventure', name: 'WorkVenture', domain: 'workventure.com', labels: ['workventure'], hosts: ['workventure.com'] },
+  { key: 'jobsdb', name: 'JobsDB', domain: 'jobsdb.com', labels: ['jobsdb'], hosts: ['jobsdb.com'] },
+  { key: 'shine', name: 'Shine', domain: 'shine.com', labels: [], hosts: ['shine.com'] },
+  { key: 'foundit', name: 'Foundit', domain: 'foundit.in', labels: [], hosts: ['foundit.in'] },
+  { key: 'bayt', name: 'Bayt', domain: 'bayt.com', labels: [], hosts: ['bayt.com'] },
+  { key: 'gulftalent', name: 'GulfTalent', domain: 'gulftalent.com', labels: [], hosts: ['gulftalent.com'] },
+  { key: 'payscale', name: 'Payscale', domain: 'payscale.com', labels: ['payscale'], hosts: ['payscale.com'] },
+  { key: 'salarycom', name: 'Salary.com', domain: 'salary.com', labels: [], hosts: ['salary.com'] },
+  { key: 'repvue', name: 'RepVue', domain: 'repvue.com', labels: ['repvue'], hosts: ['repvue.com'] },
+  { key: 'taro', name: 'Taro', domain: 'jointaro.com', labels: ['jointaro'], hosts: ['jointaro.com'] },
+  { key: 'canadastop100employers', name: "Canada's Top 100 Employers", domain: 'canadastop100.com', labels: ['canadastop100'], hosts: ['canadastop100.com'] },
+  { key: 'topemployersinstitute', name: 'Top Employers Institute', domain: 'top-employers.com', labels: [], hosts: ['top-employers.com'] },
+  { key: 'topworkplaces', name: 'Top Workplaces', domain: 'topworkplaces.com', labels: [], hosts: ['topworkplaces.com'] },
+  { key: 'arbeitgeberranking', name: 'Arbeitgeber-Ranking', domain: 'arbeitgeber-ranking.de', labels: [], hosts: ['arbeitgeber-ranking.de'] },
+  { key: 'work180', name: 'WORK180', domain: 'work180.com', labels: ['work180'], hosts: ['work180.com'] },
+  { key: 'handshake', name: 'Handshake', domain: 'joinhandshake.com', labels: ['joinhandshake'], hosts: ['joinhandshake.com'] },
+  { key: 'totaljobs', name: 'Totaljobs', domain: 'totaljobs.com', labels: ['totaljobs'], hosts: ['totaljobs.com'] },
+  { key: 'reed', name: 'Reed', domain: 'reed.co.uk', labels: [], hosts: ['reed.co.uk'] },
+  { key: 'jobsch', name: 'Jobs.ch', domain: 'jobs.ch', labels: [], hosts: ['jobs.ch'] },
+  { key: 'linkedin', name: 'LinkedIn', domain: 'linkedin.com', labels: ['linkedin'], hosts: ['linkedin.com'] },
+  { key: 'reddit', name: 'Reddit', domain: 'reddit.com', labels: ['reddit'], hosts: ['reddit.com'] },
+  { key: 'youtube', name: 'YouTube', domain: 'youtube.com', labels: ['youtube'], hosts: ['youtu.be', 'youtube.com'] },
+  { key: 'x', name: 'X (Twitter)', domain: 'x.com', labels: ['twitter'], hosts: ['x.com'] },
+  { key: 'facebook', name: 'Facebook', domain: 'facebook.com', labels: ['facebook'], hosts: ['facebook.com', 'fb.com'] },
+  { key: 'instagram', name: 'Instagram', domain: 'instagram.com', labels: ['instagram'], hosts: ['instagram.com'] },
+  { key: 'tiktok', name: 'TikTok', domain: 'tiktok.com', labels: ['tiktok'], hosts: ['tiktok.com'] },
+  { key: 'quora', name: 'Quora', domain: 'quora.com', labels: ['quora'], hosts: ['quora.com'] },
+  { key: 'medium', name: 'Medium', domain: 'medium.com', labels: [], hosts: ['medium.com'] },
+  { key: 'threads', name: 'Threads', domain: 'threads.net', labels: ['threads'], hosts: ['threads.net'] },
+  { key: 'pinterest', name: 'Pinterest', domain: 'pinterest.com', labels: ['pinterest'], hosts: ['pinterest.com'] },
+  { key: 'discord', name: 'Discord', domain: 'discord.com', labels: ['discord'], hosts: ['discord.com'] },
+  { key: 'snapchat', name: 'Snapchat', domain: 'snapchat.com', labels: ['snapchat'], hosts: ['snapchat.com'] },
+  { key: 'bluesky', name: 'Bluesky', domain: 'bsky.app', labels: ['bluesky'], hosts: ['bsky.app'] },
+  { key: 'tumblr', name: 'Tumblr', domain: 'tumblr.com', labels: ['tumblr'], hosts: ['tumblr.com'] },
+  { key: 'mastodon', name: 'Mastodon', domain: 'mastodon.social', labels: ['mastodon'], hosts: ['mastodon.social'] },
+  { key: 'xing', name: 'XING', domain: 'xing.com', labels: ['xing'], hosts: ['xing.com'] },
+  { key: 'wikipedia', name: 'Wikipedia', domain: 'wikipedia.org', labels: ['wikipedia'], hosts: ['wikipedia.org'], suffixes: ['org'] },
 ];
 
-// Keys that only fold through their explicit hosts, never by label.
-const HOST_ONLY = new Set(['x', 'levels']);
+// Short links and aliases that belong to a platform above.
+const EXTRA_HOSTS: Record<string, string[]> = {
+  linkedin: ['lnkd.in'], reddit: ['redd.it'], youtube: ['youtu.be'], facebook: ['fb.me', 'fb.com'], x: ['t.co', 'twitter.com'],
+};
 
 const SECOND_LEVEL = new Set(['co', 'com', 'org', 'net', 'ac', 'gov', 'edu']);
 const COUNTRY_SUFFIX = /^(?:(?:co|com|org|net|ac|gov|edu)\.)?[a-z]{2}$/;
@@ -98,8 +165,8 @@ const BY_HOST = new Map<string, PlatformDef>();
 const BY_KEY = new Map<string, PlatformDef>();
 for (const p of PLATFORMS) {
   BY_KEY.set(p.key, p);
-  if (!HOST_ONLY.has(p.key)) BY_LABEL.set(p.key, p);
-  for (const h of p.hosts || []) BY_HOST.set(h, p);
+  for (const l of p.labels) if (!BY_LABEL.has(l)) BY_LABEL.set(l, p);
+  for (const h of [...p.hosts, ...(EXTRA_HOSTS[p.key] || [])]) if (!BY_HOST.has(h)) BY_HOST.set(h, p);
 }
 
 /**
@@ -161,6 +228,45 @@ export const canonicalHost = (input: string): string => sourceIdentity(input).do
 
 /** Pretty name for a source host (platform name, else the host). */
 export const sourceDisplayName = (input: string): string => sourceIdentity(input).name;
+
+
+// ─── Generic country folding (hosts that are not registered platforms) ──────
+
+// ISO 3166 country codes used as subdomains and as suffixes. Codes that are
+// also common words or products ("my", "id", "me", "to", "ai", "tv", "io"...)
+// are left out of the subdomain rule: my.example.com is an account area.
+const COUNTRY_CODES = new Set((
+  'ad ae af ag al am ao ar at au az ba bb bd be bf bg bh bi bj bn bo br bs bt bw by bz ca cd cg ch ci cl cm cn co cr cu cv cy cz ' +
+  'de dj dk dm dz ec ee eg er es et fi fj fr ga gb ge gh gm gn gr gt gy hk hn hr ht hu ie il in iq ir it jm jo jp ke kg kh kr kw kz ' +
+  'la lb lk lr ls lt lu lv ly ma md mg mk ml mm mn mt mu mv mw mx mz na ng ni nl no np nz om pa pe pg ph pk pl pt py qa ro rs ru rw ' +
+  'sa sb sc se sg si sk sl sn sv sy tg th tj tn tr tt tw tz ua ug uk us uy uz ve vn ye za zm zw'
+).split(' '));
+
+function countrySubdomainStripped(host: string): string {
+  const parts = host.split('.');
+  if (parts.length >= 3) {
+    const first = parts[0];
+    if (COUNTRY_CODES.has(first)) {
+      const rest = parts.slice(1).join('.');
+      if (splitSuffix(rest)) return rest;
+    }
+  }
+  return host;
+}
+
+/** The name before the suffix, when the suffix is .com or a country suffix; null otherwise. */
+function genericBase(host: string): { base: string; stripped: string; suffix: string } | null {
+  const stripped = countrySubdomainStripped(host);
+  const parts = stripped.split('.');
+  const last = parts[parts.length - 1];
+  const prev = parts[parts.length - 2];
+  let suffixLen = 1;
+  if (parts.length >= 3 && /^[a-z]{2}$/.test(last) && SECOND_LEVEL.has(prev)) suffixLen = 2;
+  const suffix = parts.slice(parts.length - suffixLen).join('.');
+  if (parts.length - suffixLen < 1) return null;
+  if (suffix !== 'com' && !(COUNTRY_SUFFIX.test(suffix) && (suffixLen === 2 || COUNTRY_CODES.has(suffix)))) return null;
+  return { base: parts.slice(0, parts.length - suffixLen).join('.'), stripped, suffix };
+}
 
 // ─── URLs ───────────────────────────────────────────────────────────────────
 
@@ -289,13 +395,37 @@ export const OTHER_PAGES_SUFFIX = 'other';
  */
 export function buildSourceLines(hosts: Iterable<string>, owned: OwnedEntry[]): SourceLine[] {
   const groups = new Map<string, { id: SourceIdentity; members: Set<string> }>();
+  const generic = new Map<string, { hosts: Set<string>; stripped: Set<string> }>();
   for (const h of hosts) {
     const host = normalizeHost(h);
     if (!host) continue;
     const id = sourceIdentity(host);
+    if (!id.platform && !isOwnedHost(host, owned)) {
+      // Not a registered platform and not the client's own: fold country
+      // subdomains and country variants of the same name.
+      const g = genericBase(host);
+      if (g) {
+        const e = generic.get(g.base) || { hosts: new Set<string>(), stripped: new Set<string>() };
+        e.hosts.add(host);
+        e.stripped.add(g.stripped);
+        generic.set(g.base, e);
+        continue;
+      }
+    }
     const g = groups.get(id.key) || { id, members: new Set<string>() };
     g.members.add(host);
     groups.set(id.key, g);
+  }
+  for (const [base, e] of generic) {
+    if (e.hosts.size === 1) {
+      const host = Array.from(e.hosts)[0];
+      groups.set(host, { id: { key: host, name: host, domain: host, platform: false }, members: new Set([host]) });
+      continue;
+    }
+    // One line for the family: its .com host when cited, else the shortest.
+    const stripped = Array.from(e.stripped).sort((a, b) => a.length - b.length);
+    const domain = stripped.find(x => x.endsWith('.com')) || stripped[0];
+    groups.set(`family:${base}`, { id: { key: `family:${base}`, name: domain, domain, platform: false }, members: e.hosts });
   }
 
   const lines: SourceLine[] = [];
@@ -309,7 +439,7 @@ export function buildSourceLines(hosts: Iterable<string>, owned: OwnedEntry[]): 
     if (!g.id.platform && !pageRules.length) {
       lines.push({
         key: g.id.key, name: g.id.name, domain: g.id.domain, owned: wholeOwned,
-        members, include: null, exclude: null, needsUnion: false,
+        members, include: null, exclude: null, needsUnion: members.length > 1,
       });
     } else if (!pageRules.length || wholeOwned) {
       lines.push({
