@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { claudeFetch } from "../_shared/claude-keys.ts";
-import { competitorPrompts } from "../_shared/competitor-prompt.ts";
+import { cleanCompetitorReply, competitorPrompts } from "../_shared/competitor-prompt.ts";
 
 const MODEL = "claude-haiku-5-5";
 
@@ -76,7 +76,7 @@ serve(async (req) => {
         { status: 502, headers: corsHeaders }
       );
     }
-    let detectedCompetitors = textBlocks.map((b: any) => b.text).join('').trim();
+    let detectedCompetitors = cleanCompetitorReply(textBlocks.map((b: any) => b.text).join(''));
 
     // Filter out responses that indicate no competitors were found
     if (

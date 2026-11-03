@@ -111,3 +111,20 @@ export function filterCompetitorNames(raw: string, companyName: string): string 
     .slice(0, 10)
     .join(", ");
 }
+
+// Haiku does not always answer with a bare list: in the July comparison
+// (2026-11-02, 100 CSL Behring answers) 15 replies were a sentence explaining
+// there were none, "None", the literal "(empty string)", or a job site. A reply
+// that is not a plain list of names is stored as none found, and job sites and
+// review sites the prompt already excludes are dropped.
+const NOT_A_LIST = /^(\(?empty string\)?|none|n\/a|no competitors( found)?)\.?$/i;
+const EXCLUDED_SITES = /^(glassdoor|indeed|linkedin|seek|kununu|levels\.fyi|reddit|ambitionbox|comparably|jobs\.ch)$/i;
+
+export function cleanCompetitorReply(raw: string): string {
+  const reply = raw.trim().replace(/^"|"$/g, '').trim();
+  if (!reply || NOT_A_LIST.test(reply)) return '';
+  const names = reply.split(',').map((n) => n.trim()).filter(Boolean);
+  // A sentence, not a list: a long item, or sentence punctuation inside one.
+  if (names.some((n) => n.split(/\s+/).length > 6 || /[.!?:]\s|\n/.test(n))) return '';
+  return names.filter((n) => !EXCLUDED_SITES.test(n) && !NOT_A_LIST.test(n)).join(', ');
+}
