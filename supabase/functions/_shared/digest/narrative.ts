@@ -243,7 +243,7 @@ export function digestMarkdown(payload: DigestPayload): string {
   }
   if (payload.sources.length) {
     lines.push('', '### Sources AI reads');
-    for (const s of payload.sources) lines.push(`- ${s.name}${s.owned ? ' (owned)' : ''}: ${s.pct}% of answers${d(s.delta)}`);
+    for (const s of payload.sources) lines.push(`- ${s.name}${s.owned ? ' (owned)' : s.partlyOwned ? ' (partly owned platform)' : ''}: ${s.pct}% of answers${d(s.delta)}`);
   }
   if (payload.attributes.length) {
     lines.push('', '### Themes');

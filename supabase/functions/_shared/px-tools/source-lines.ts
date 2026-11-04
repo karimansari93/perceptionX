@@ -67,7 +67,7 @@ export function sumByHost(rows: DomainStatRow[]): Map<string, { citing: number; 
 /** One honest line per host, for when a union cannot be read. */
 export function ungroupLine(line: SourceLine, owned: OwnedEntry[]): SourceLine[] {
   return line.members.map(host => ({
-    key: host, name: host, domain: host, owned: isOwnedHost(host, owned),
+    key: host, name: host, domain: host, owned: isOwnedHost(host, owned), partlyOwned: false,
     members: [host], include: null, exclude: null, needsUnion: false,
   }));
 }
@@ -232,5 +232,9 @@ export function pagesForLine(line: SourceLine, pageRows: any[], denominator: num
 export const SOURCE_LINE_NOTES = [
   'One platform is one source: country sites such as in.linkedin.com, linkedin.com, glassdoor.co.in and glassdoor.com are folded together. The client\'s own domains (for example careers.ford.com) stay separate.',
   'Coverage of a merged line is the share of answers citing any of its sites, counted once per answer. Never add the percentages of separate lines: answers overlap.',
-  'A platform the client owns pages on appears as two lines, "<Platform>: your pages and posts" (owned: true) and "<Platform>: other". An answer can cite both, so the two lines overlap.',
+  'A platform the client owns pages on appears as two lines, "<Platform>: your pages and posts" (ownership: owned) and "<Platform>: other" (ownership: partly_owned, because the client also owns pages on that platform). An answer can cite both, so the two lines overlap.',
 ];
+
+/** The tri-state tools report: owned, partly_owned (the client owns some pages on the platform) or third_party. */
+export const ownershipOf = (line: Pick<SourceLine, 'owned' | 'partlyOwned'>): 'owned' | 'partly_owned' | 'third_party' =>
+  line.owned ? 'owned' : line.partlyOwned ? 'partly_owned' : 'third_party';

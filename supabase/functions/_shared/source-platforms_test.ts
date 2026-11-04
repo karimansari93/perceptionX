@@ -148,6 +148,10 @@ Deno.test('lines: a platform with owned pages shows as two lines', () => {
     ['linkedin:owned', 'LinkedIn: your pages and posts', true],
     ['linkedin:other', 'LinkedIn: other', false],
   ]);
+  // The platform is partly owned: the "other" half carries the badge.
+  assertEquals(li.map(l => l.partlyOwned), [false, true]);
+  // A platform with no owned pages is not partly owned.
+  assertEquals(lines.find(l => l.key === 'glassdoor')?.partlyOwned, false);
   assertEquals(li[0].members, ['hu.linkedin.com', 'in.linkedin.com', 'linkedin.com']);
   assertEquals(li[0].include?.length, 3);
   assertEquals(li[0].exclude, null);
@@ -234,4 +238,11 @@ Deno.test('all data: hosts the client owns are never folded', () => {
   assertEquals(keys, ['careers.ford.com', 'india.ford.com', 'ford.co.uk', 'ford.com', 'ford.de', 'fordpro.com'].sort());
   assertEquals(lines.find(l => l.key === 'ford.de')?.owned, true);
   assertEquals(lines.find(l => l.key === 'ford.co.uk')?.owned, false);
+});
+
+Deno.test('all data: a section that looks like a country code is not folded (hr., it.)', () => {
+  const lines = buildSourceLines(['economictimes.indiatimes.com', 'hr.economictimes.indiatimes.com', 'it.example.com', 'example.com', 'de.example.com'], []);
+  const keys = lines.map(l => l.key).sort();
+  assertEquals(keys, ['economictimes.indiatimes.com', 'family:example', 'hr.economictimes.indiatimes.com', 'it.example.com'].sort());
+  assertEquals(lines.find(l => l.key === 'family:example')?.members, ['de.example.com', 'example.com']);
 });

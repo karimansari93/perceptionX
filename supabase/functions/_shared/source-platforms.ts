@@ -242,14 +242,21 @@ const COUNTRY_CODES = new Set((
   'sa sb sc se sg si sk sl sn sv sy tg th tj tn tr tt tw tz ua ug uk us uy uz ve vn ye za zm zw'
 ).split(' '));
 
+// Country editions of a site are usually served from a code subdomain
+// (de.example.com). Only codes that are clearly editions count: "hr" (human
+// resources), "it", "ai", "my", "id", "me" and the like are as often a
+// section of the site, and folding hr.economictimes.indiatimes.com into the
+// main site would hide a real source. Registered platforms fold every
+// subdomain regardless (see platformOfHost).
+const EDITION_SUBDOMAINS = new Set((
+  'ae at au be bg br ca ch cl cn co cz de dk ee eg es fi fr gb gr hk hu ie il in jp ke kr lt lv mx ng nl no nz pe ph pl pt ro ru sa se sg sk th tr tw ua uk us vn za'
+).split(' '));
+
 function countrySubdomainStripped(host: string): string {
   const parts = host.split('.');
-  if (parts.length >= 3) {
-    const first = parts[0];
-    if (COUNTRY_CODES.has(first)) {
-      const rest = parts.slice(1).join('.');
-      if (splitSuffix(rest)) return rest;
-    }
+  if (parts.length >= 3 && EDITION_SUBDOMAINS.has(parts[0])) {
+    const rest = parts.slice(1).join('.');
+    if (splitSuffix(rest)) return rest;
   }
   return host;
 }
@@ -373,6 +380,11 @@ export interface SourceLine {
   /** Canonical host: logo and click-through. */
   domain: string;
   owned: boolean;
+  /**
+   * The client owns some pages on this platform but not this line: the
+   * "other" half of a split platform. Shown as a "partly owned" badge.
+   */
+  partlyOwned: boolean;
   /** Hosts folded into the line, as cited. */
   members: string[];
   /** Owned half of a split platform: only these pages. */
@@ -438,21 +450,21 @@ export function buildSourceLines(hosts: Iterable<string>, owned: OwnedEntry[]): 
 
     if (!g.id.platform && !pageRules.length) {
       lines.push({
-        key: g.id.key, name: g.id.name, domain: g.id.domain, owned: wholeOwned,
+        key: g.id.key, name: g.id.name, domain: g.id.domain, owned: wholeOwned, partlyOwned: false,
         members, include: null, exclude: null, needsUnion: members.length > 1,
       });
     } else if (!pageRules.length || wholeOwned) {
       lines.push({
-        key: g.id.key, name: g.id.name, domain: g.id.domain, owned: wholeOwned,
+        key: g.id.key, name: g.id.name, domain: g.id.domain, owned: wholeOwned, partlyOwned: false,
         members, include: null, exclude: null, needsUnion: members.length > 1,
       });
     } else {
       lines.push({
-        key: `${g.id.key}:owned`, name: `${g.id.name}: ${OWNED_PAGES_SUFFIX}`, domain: g.id.domain, owned: true,
+        key: `${g.id.key}:owned`, name: `${g.id.name}: ${OWNED_PAGES_SUFFIX}`, domain: g.id.domain, owned: true, partlyOwned: false,
         members, include: pageRules, exclude: null, needsUnion: true,
       });
       lines.push({
-        key: `${g.id.key}:other`, name: `${g.id.name}: ${OTHER_PAGES_SUFFIX}`, domain: g.id.domain, owned: false,
+        key: `${g.id.key}:other`, name: `${g.id.name}: ${OTHER_PAGES_SUFFIX}`, domain: g.id.domain, owned: false, partlyOwned: true,
         members, include: null, exclude: pageRules, needsUnion: true,
       });
     }

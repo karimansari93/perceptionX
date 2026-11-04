@@ -31,7 +31,7 @@ import {
   metaFor, narrowToQuarter, resolveMeasurementPeriods, resolveScope,
 } from './scope.ts';
 import type { ResolvedScope, ToolContext } from './scope.ts';
-import { pagesForLine, readToolSourceLines, SOURCE_LINE_NOTES } from './source-lines.ts';
+import { ownershipOf, pagesForLine, readToolSourceLines, SOURCE_LINE_NOTES } from './source-lines.ts';
 import {
   attributeName, buildAttributeRows, getCompetitorLandscape, readRollups,
 } from './executors-insights.ts';
@@ -337,6 +337,7 @@ export async function getCompanyOverview(ctx: ToolContext, companyId: string, in
       domain: line.domain,
       name: line.name,
       owned: line.owned,
+      ownership: ownershipOf(line),
       cited_in_pct_of_answers: pct(citing, answers),
       answer_gap_pct_of_answers: pct(Math.max(0, citing - mentioned), answers),
       sample_size: { answers_citing: citing },
@@ -571,6 +572,7 @@ export async function getCitations(
       domain: line.domain,
       name: line.name,
       owned: line.owned,
+      ownership: ownershipOf(line),
       cited_in_pct_of_answers: pct(citing, answers),
       ...(links !== null ? { share_of_citations_pct: pct(links, totalCitations) } : {}),
       answer_gap_pct_of_answers: pct(Math.max(0, citing - mentioned), answers),
