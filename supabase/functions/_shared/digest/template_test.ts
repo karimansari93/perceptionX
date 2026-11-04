@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
-import { digestSubject, renderDigestHtml, sentimentBadge } from './template.ts';
+import { digestSubject, previewLine, renderDigestHtml, sentimentBadge } from './template.ts';
 import { coverageRows, describeLocation, displayMarket, filterActions, filterDoneActions, groupRows, likeForLikeFromRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
 import { cap, capTitle, digestMarkdown, evidenceAttributes, narrativeFromReply, validateNarrative } from './narrative.ts';
 import type { DigestPayload } from './types.ts';
@@ -51,8 +51,8 @@ const payload: DigestPayload = {
 const opts = { appUrl: 'https://app.perceptionx.ai', logoDevToken: 'pk_test' };
 
 Deno.test('subject and title carry the short quarter', () => {
-  assertEquals(digestSubject(payload), 'Your Q4 26 Update');
-  assertStringIncludes(renderDigestHtml(payload, opts), '<title>Your Q4 26 Update</title>');
+  assertEquals(digestSubject(payload), 'PerceptionX Q4 26 Update');
+  assertStringIncludes(renderDigestHtml(payload, opts), '<title>PerceptionX Q4 26 Update</title>');
 });
 
 Deno.test('marks come from logo.dev and icons from the app, never Google', () => {
@@ -367,4 +367,13 @@ Deno.test('months as periods and relevance as a percentage are sent back', () =>
     try { validateNarrative({ ...ok, callouts: [{ title: 't', body: bad }, { title: 'u', body: 'b' }] }, payload); } catch (e) { threw = (e as Error).message; }
     assert(threw.length > 0, bad);
   }
+});
+
+Deno.test('the inbox preview line is one standard sentence, padded so the body does not spill into it', () => {
+  const line = previewLine(payload);
+  assert(line.startsWith("Here's your PerceptionX Q4 26 update for "));
+  const html = renderDigestHtml(payload, opts);
+  assertStringIncludes(html, line);
+  assertStringIncludes(html, '&#847;&zwnj;&nbsp;'.repeat(90));
+  assert(!html.includes(payload.narrative!.preheader));
 });
