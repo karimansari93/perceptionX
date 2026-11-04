@@ -27,8 +27,10 @@
 import {
   changeBlock, coverageFound, coverageNoData, coveragePartial, EXCLUDED_AI_MODELS_FILTER, CLAUDE_PUBLISHED_OR,
   labelQuarter, METHODOLOGY_NOTES, monthToQuarter, pct, pointsDelta, rate1, sentimentPct,
-  sortQuarters, toQuarterly, topPagesByDomain, pageEntry, PAGES_UNAVAILABLE_NOTE,
+  sortQuarters, toQuarterly, pageEntry, PAGES_UNAVAILABLE_NOTE,
 } from './helpers.ts';
+import { pagesForLine, readOwnedEntries, readToolSourceLines, SOURCE_LINE_NOTES } from './source-lines.ts';
+import { isOwnedHost } from '../source-platforms.ts';
 import { answersByQuarter, metaFor, resolveScope, scopeSuffix } from './scope.ts';
 import type { ResolvedScope, ToolContext } from './scope.ts';
 
@@ -302,7 +304,7 @@ export async function getAttributeThemes(
       .limit(40);
     if (r.buckets) q = q.in('prompt_responses.confirmed_prompts.location_context', r.buckets);
 
-    const [themeRes, sourcesRes] = await Promise.all([
+    const [themeRes, sourcesRes, ownedRead] = await Promise.all([
       q,
       ctx.admin.rpc('mcp_get_attribute_sources', {
         p_company_ids: r.scope.companyIds,
@@ -311,6 +313,7 @@ export async function getAttributeThemes(
         p_months: latestMonths,
         p_limit: 10,
       }),
+      readOwnedEntries(ctx, r.scope.companyIds),
     ]);
 
     const seen = new Set<string>();
@@ -341,9 +344,10 @@ export async function getAttributeThemes(
         }
       : {
           period: periodLabel,
-          note: `Domains cited in the ${periodLabel} answers that discuss ${attributeName(attributeId)} (a random sample of ${answersSampled} answers) — where this topic is being sourced from, with the most-cited pages on each (top_pages — link these). Association, not cause.`,
+          note: `Domains cited in the ${periodLabel} answers that discuss ${attributeName(attributeId)} (a random sample of ${answersSampled} answers), where this topic is being sourced from, with the most-cited pages on each (top_pages: link these). Association, not cause. Rows here are single sites: country sites of one platform (in.linkedin.com, linkedin.com) are listed separately, so never add their percentages; the merged platform lines are in get_sources.`,
           sources: ((sourcesRes.data?.rows as any[]) || []).map((row: any) => ({
             domain: row.domain,
+            ...(ownedRead.error ? {} : { owned: isOwnedHost(String(row.domain), ownedRead.entries) }),
             cited_in_pct_of_attribute_answers: pct(row.answers_citing || 0, answersSampled),
             top_pages: ((row.top_pages as any[]) || [])
               .map((p: any) => pageEntry(p, answersSampled, 'cited_in_pct_of_attribute_answers'))
@@ -485,11 +489,14 @@ export async function getSources(
   if (typeof r === 'string') return r;
 
   const [domainRes, rollupsRes, pagesRes] = await Promise.all([
+    // Every cited host, not a top slice: country sites of one platform are
+    // folded into a single line below, and a long-tail host must not drop out
+    // of its platform's coverage.
     ctx.admin.rpc('mcp_get_domain_stats', {
       p_company_ids: r.scope.companyIds,
       p_buckets: r.buckets, p_job_functions: r.jobFunctions,
       p_months: r.months,
-      p_limit: Math.max(limit * 3, 100), // headroom before gap filtering
+      p_limit: 1000,
     }),
     ctx.admin.rpc('mcp_get_rollups', {
       p_company_ids: r.scope.companyIds,
@@ -498,13 +505,14 @@ export async function getSources(
     }),
     // Most-cited pages per domain (url + title) from the page cube — the
     // links a host needs to cite a source properly. Same denominator as the
-    // domain shares.
+    // domain shares. Ten per host so a split platform's "your pages" half
+    // still finds its own pages among a busy platform's top URLs.
     ctx.admin.rpc('mcp_get_cited_pages', {
       p_company_ids: r.scope.companyIds,
       p_buckets: r.buckets, p_job_functions: r.jobFunctions,
       p_months: r.months,
-      p_limit: Math.max(limit * 3, 90),
-      p_per_domain: 3,
+      p_limit: 300,
+      p_per_domain: 10,
     }),
   ]);
   const { data, error } = domainRes;
@@ -523,31 +531,27 @@ export async function getSources(
     });
   }
 
-  const byDomain = new Map<string, { citing: number; mentionedCiting: number; citations: number }>();
-  for (const row of rows) {
-    const d = row.domain;
-    if (!byDomain.has(d)) byDomain.set(d, { citing: 0, mentionedCiting: 0, citations: 0 });
-    const e = byDomain.get(d)!;
-    e.citing += row.responses_citing || 0;
-    e.mentionedCiting += row.mentioned_responses_citing || 0;
-    e.citations += row.citation_count || 0;
-  }
-
-  // Shares lead, raw counts nest under sample_size: "cited by 31% of
-  // answers" is the useful stat; counts stay only as sample-size context.
-  let sources = Array.from(byDomain.entries()).map(([domain, v]) => {
-    const gap = Math.max(0, v.citing - v.mentionedCiting);
+  // Source lines: platforms merged, the client's own pages split out, coverage
+  // a union of answers (see source-lines.ts). Shares lead, raw counts nest
+  // under sample_size: "cited by 31% of answers" is the useful stat; counts
+  // stay only as sample-size context.
+  const { rows: lineRows, notes: lineNotes } = await readToolSourceLines(ctx, r, rows, totalResponses);
+  let sources = lineRows.map(({ line, citing, mentioned, citations }) => {
+    const gap = Math.max(0, citing - mentioned);
     return {
-      domain,
-      cited_in_pct_of_answers: pct(v.citing, totalResponses),
+      domain: line.domain,
+      name: line.name,
+      owned: line.owned,
+      cited_in_pct_of_answers: pct(citing, totalResponses),
       answer_gap_pct_of_answers: pct(gap, totalResponses),   // cited while the company was absent
-      gap_rate_pct: pct(gap, v.citing),                      // of its citing answers, % where company absent
+      gap_rate_pct: pct(gap, citing),                        // of its citing answers, % where company absent
       sample_size: {
-        answers_citing: v.citing,
-        answers_citing_with_company_mentioned: v.mentionedCiting,
+        answers_citing: citing,
+        answers_citing_with_company_mentioned: mentioned,
         answer_gap: gap,
-        citations: v.citations,
+        ...(citations !== null ? { citations } : {}),
       },
+      line,
     };
   });
 
@@ -555,12 +559,10 @@ export async function getSources(
     ? sources.filter(s => s.sample_size.answer_gap > 0).sort((a, b) => b.sample_size.answer_gap - a.sample_size.answer_gap)
     : sources.sort((a, b) => b.sample_size.answers_citing - a.sample_size.answers_citing);
   const pagesSampled = pagesRes.error ? 0 : Number(pagesRes.data?.answers_sampled) || 0;   // > 0 only under a job-function filter
-  const pagesByDomain = pagesRes.error
-    ? new Map<string, Record<string, unknown>[]>()
-    : topPagesByDomain(pagesRes.data?.rows || [], pagesSampled || totalResponses, 'cited_in_pct_of_answers');
-  const sourcesWithPages = sources.slice(0, limit).map(({ sample_size, ...s }) => ({
+  const pageRows: any[] = pagesRes.error ? [] : (pagesRes.data?.rows || []);
+  const sourcesWithPages = sources.slice(0, limit).map(({ sample_size, line, ...s }) => ({
     ...s,
-    top_pages: pagesByDomain.get(s.domain) || [],
+    top_pages: pagesForLine(line, pageRows, pagesSampled || totalResponses, 'cited_in_pct_of_answers'),
     sample_size,
   }));
 
@@ -568,16 +570,17 @@ export async function getSources(
     sources: sourcesWithPages,
     sample_size: {
       answers: totalResponses,
-      distinct_domains: data?.domain_total ?? byDomain.size,
+      distinct_domains: data?.domain_total ?? rows.length,
       ...(pagesSampled ? { answers_sampled_for_pages: pagesSampled } : {}),
     },
     _coverage: coverageFound({
       returned: sourcesWithPages.length,
       gap_only: gapOnly,
       ...(pagesRes.error ? { pages_note: PAGES_UNAVAILABLE_NOTE } : {}),
+      ...(lineNotes.length ? { sources_note: lineNotes.join(' ') } : {}),
     }),
     _meta: metaFor(r, [
-      'Domains are canonicalized (regional variants collapse to one root).',
+      ...SOURCE_LINE_NOTES,
       '"answer_gap" = answers citing this domain where the company was NOT mentioned — the outreach opportunity surface.',
       METHODOLOGY_NOTES.pages,
     ]),

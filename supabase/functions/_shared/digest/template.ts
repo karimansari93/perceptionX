@@ -288,7 +288,7 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     ? section('Employers AI names alongside you', `${escapeHtml(payload.employersNote)}${sinceSub}.${payload.employersContext ? ' ' + escapeHtml(payload.employersContext) : ''}`, barList(payload.employers.map(r => barRow(r, token))))
     : '';
   const sources = payload.sources.length
-    ? section('Sources AI reads', `Share of answers citing each source${sinceSub}.${payload.sources.some(s => s.owned) ? ' Your own sites are marked.' : ''}`, barList(payload.sources.map(r => barRow(r, token))))
+    ? section('Sources AI reads', `Share of answers citing each source${sinceSub}.${payload.sources.some(s => s.owned) ? ' Your own sites and pages are marked.' : ''}`, barList(payload.sources.map(r => barRow(r, token))))
     : '';
 
   const themeSub = `What AI talks about when it describes working at ${escapeHtml(payload.brand.name)}, and how positively.${payload.sentimentChangeHidden ? ' Change resumes next quarter.' : ''}`;

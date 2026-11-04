@@ -25,12 +25,13 @@ import { bandLabel } from './bands.ts';
 import {
   buildMeta, coverageFound, coverageNoData, coveragePartial, EXCLUDED_AI_MODELS_FILTER, CLAUDE_PUBLISHED_OR,
   extractSnippet, labelQuarter, METHODOLOGY_NOTES, monthToQuarter, pct, pointsDelta,
-  quartersOfMonths, sentimentPct, sortQuarters, topPagesByDomain, PAGES_UNAVAILABLE_NOTE,
+  quartersOfMonths, sentimentPct, sortQuarters, PAGES_UNAVAILABLE_NOTE,
 } from './helpers.ts';
 import {
   metaFor, narrowToQuarter, resolveMeasurementPeriods, resolveScope,
 } from './scope.ts';
 import type { ResolvedScope, ToolContext } from './scope.ts';
+import { pagesForLine, readToolSourceLines, SOURCE_LINE_NOTES } from './source-lines.ts';
 import {
   attributeName, buildAttributeRows, getCompetitorLandscape, readRollups,
 } from './executors-insights.ts';
@@ -280,7 +281,7 @@ export async function getCompanyOverview(ctx: ToolContext, companyId: string, in
       p_company_ids: r.scope.companyIds, p_buckets: null, p_job_functions: null, p_months: latestR.months, p_limit: 5,
     }),
     ctx.admin.rpc('mcp_get_domain_stats', {
-      p_company_ids: r.scope.companyIds, p_buckets: null, p_job_functions: null, p_months: latestR.months, p_limit: 5,
+      p_company_ids: r.scope.companyIds, p_buckets: null, p_job_functions: null, p_months: latestR.months, p_limit: 1000,
     }),
     ctx.admin.rpc('mcp_get_theme_stats', {
       p_company_ids: r.scope.companyIds, p_buckets: null, p_job_functions: null, p_months: latestR.months, p_limit: 8,
@@ -326,19 +327,19 @@ export async function getCompanyOverview(ctx: ToolContext, companyId: string, in
     .sort((a, b) => b.sample_size.answers_naming - a.sample_size.answers_naming)
     .slice(0, 5);
 
-  const srcAgg = new Map<string, { citing: number; mentioned: number }>();
-  for (const row of ((srcRes.data?.rows as any[]) || [])) {
-    const e = srcAgg.get(row.domain) || { citing: 0, mentioned: 0 };
-    e.citing += row.responses_citing || 0;
-    e.mentioned += row.mentioned_responses_citing || 0;
-    srcAgg.set(row.domain, e);
-  }
-  const topSources = Array.from(srcAgg.entries())
-    .map(([domain, v]) => ({
-      domain,
-      cited_in_pct_of_answers: pct(v.citing, answers),
-      answer_gap_pct_of_answers: pct(Math.max(0, v.citing - v.mentioned), answers),
-      sample_size: { answers_citing: v.citing },
+  // Top sources as lines: platforms merged, the client's own pages split out,
+  // coverage a union of answers. Same rule as get_sources and the email.
+  const { rows: srcLines, notes: srcNotes } = await readToolSourceLines(
+    ctx, latestR, ((srcRes.data?.rows as any[]) || []), answers,
+  );
+  const topSources = srcLines
+    .map(({ line, citing, mentioned }) => ({
+      domain: line.domain,
+      name: line.name,
+      owned: line.owned,
+      cited_in_pct_of_answers: pct(citing, answers),
+      answer_gap_pct_of_answers: pct(Math.max(0, citing - mentioned), answers),
+      sample_size: { answers_citing: citing },
     }))
     .sort((a, b) => b.sample_size.answers_citing - a.sample_size.answers_citing)
     .slice(0, 5);
@@ -358,8 +359,9 @@ export async function getCompanyOverview(ctx: ToolContext, companyId: string, in
       has_competitors: topCompetitors.length > 0,
       has_sources: topSources.length > 0,
       ...(themeRes.error ? { themes_note: 'Theme breakdown unavailable for this scope right now.' } : {}),
+      ...(srcNotes.length ? { sources_note: srcNotes.join(' ') } : {}),
     }),
-    _meta: metaFor(r, [...SCORECARD_NOTES, METHODOLOGY_NOTES.attribute_share, METHODOLOGY_NOTES.theme_sample]),
+    _meta: metaFor(r, [...SCORECARD_NOTES, METHODOLOGY_NOTES.attribute_share, METHODOLOGY_NOTES.theme_sample, ...SOURCE_LINE_NOTES]),
   });
 }
 
@@ -524,38 +526,34 @@ export async function getCitations(
   if (typeof r === 'string') return r;
 
   const filter = domainFilter ? domainFilter.replace(/^www\./, '').toLowerCase().trim() : '';
-  const exactDomain = filter.includes('.') ? filter : null;   // a full domain narrows the page read itself
   const [domainRes, rollupsRes, pagesRes] = await Promise.all([
     ctx.admin.rpc('mcp_get_domain_stats', {
       p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_job_functions: r.jobFunctions, p_months: r.months,
-      p_limit: filter ? 500 : 60,
+      p_limit: 1000,
     }),
     readRollups(ctx, r).then(d => ({ data: d, error: null })).catch(e => ({ data: null, error: e })),
     ctx.admin.rpc('mcp_get_cited_pages', {
       p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_job_functions: r.jobFunctions, p_months: r.months,
-      p_domain: exactDomain,
-      p_limit: filter ? 100 : 90,
-      p_per_domain: filter ? 10 : 3,
+      p_domain: null,   // lines span several hosts; pages are cut per line below
+      p_limit: 300,
+      p_per_domain: 10,
     }),
   ]);
   if (domainRes.error) return JSON.stringify({ error: `Domain stats read failed: ${domainRes.error.message}` });
   if (rollupsRes.error) return JSON.stringify({ error: rollupsRes.error.message });
 
   const answers = ((rollupsRes.data?.scope_stats || []) as any[]).reduce((s, row) => s + (row.total_responses || 0), 0);
-  const byDomain = new Map<string, { citing: number; mentioned: number; citations: number }>();
-  let totalCitations = 0;
-  for (const row of ((domainRes.data?.rows as any[]) || [])) {
-    const d = String(row.domain);
-    if (filter && !d.includes(filter)) continue;
-    const e = byDomain.get(d) || { citing: 0, mentioned: 0, citations: 0 };
-    e.citing += row.responses_citing || 0;
-    e.mentioned += row.mentioned_responses_citing || 0;
-    e.citations += row.citation_count || 0;
-    totalCitations += row.citation_count || 0;
-    byDomain.set(d, e);
-  }
+  const domainRows: any[] = (domainRes.data?.rows as any[]) || [];
+  const { rows: allLines, notes: lineNotes } = await readToolSourceLines(ctx, r, domainRows, answers);
+  // "share of links" (citation share) adds across a line's sites, so its
+  // denominator is every link in the window.
+  const totalCitations = domainRows.reduce((s, row) => s + (row.citation_count || 0), 0);
+  // The filter matches a platform's name or any site folded into it:
+  // "in.linkedin.com" and "linkedin" both return the LinkedIn line(s).
+  const lines = allLines.filter(({ line }) =>
+    !filter || line.name.toLowerCase().includes(filter) || line.members.some(m => m.includes(filter)));
 
-  if (!byDomain.size) {
+  if (!lines.length) {
     return JSON.stringify({
       citations: [],
       _coverage: coverageNoData(
@@ -567,18 +565,17 @@ export async function getCitations(
     });
   }
 
-  const pagesByDomain = pagesRes.error
-    ? new Map<string, Record<string, unknown>[]>()
-    : topPagesByDomain(pagesRes.data?.rows || [], answers, 'cited_in_pct_of_answers');
-
-  const citations: any[] = Array.from(byDomain.entries())
-    .map(([domain, v]) => ({
-      domain,
-      cited_in_pct_of_answers: pct(v.citing, answers),
-      share_of_citations_pct: pct(v.citations, totalCitations),
-      answer_gap_pct_of_answers: pct(Math.max(0, v.citing - v.mentioned), answers),
-      top_pages: pagesByDomain.get(domain) || [],
-      sample_size: { answers_citing: v.citing, citations: v.citations },
+  const pageRows: any[] = pagesRes.error ? [] : (pagesRes.data?.rows || []);
+  const citations: any[] = lines
+    .map(({ line, citing, mentioned, citations: links }) => ({
+      domain: line.domain,
+      name: line.name,
+      owned: line.owned,
+      cited_in_pct_of_answers: pct(citing, answers),
+      ...(links !== null ? { share_of_citations_pct: pct(links, totalCitations) } : {}),
+      answer_gap_pct_of_answers: pct(Math.max(0, citing - mentioned), answers),
+      top_pages: pagesForLine(line, pageRows, answers, 'cited_in_pct_of_answers', filter ? 10 : 3),
+      sample_size: { answers_citing: citing, ...(links !== null ? { citations: links } : {}) },
     }))
     .sort((a, b) => b.sample_size.answers_citing - a.sample_size.answers_citing)
     .slice(0, filter ? 50 : 20);
@@ -588,15 +585,17 @@ export async function getCitations(
     sample_size: {
       answers,
       citations: totalCitations,
-      distinct_domains: domainRes.data?.domain_total ?? byDomain.size,
+      distinct_domains: domainRes.data?.domain_total ?? domainRows.length,
     },
     _coverage: coverageFound({
       unique_domains: citations.length,
       ...(filter ? { domain_filter: domainFilter } : {}),
       ...(pagesRes.error ? { pages_note: PAGES_UNAVAILABLE_NOTE } : {}),
+      ...(lineNotes.length ? { sources_note: lineNotes.join(' ') } : {}),
     }),
     _meta: metaFor(r, [
-      'Domains are canonicalized (regional variants collapse to one root).',
+      ...SOURCE_LINE_NOTES,
+      '"share_of_citations_pct" is a source\'s share of links (citation share), not the share of answers; it is omitted for the two halves of a split platform, because links are not cut by page.',
       '"answer_gap" = answers citing this domain where the company was NOT mentioned — the outreach opportunity surface.',
       METHODOLOGY_NOTES.pages,
     ]),
