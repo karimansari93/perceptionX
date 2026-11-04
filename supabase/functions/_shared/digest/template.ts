@@ -278,9 +278,18 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
       p('Where to focus', 14, INK, 700, 'margin-bottom:4px;', '24px') + p(prose(n.action), 13, BODY) + '</td></tr></tbody></table>'
     : '';
 
-  const reportActions = payload.actions.length
+  const done = payload.doneActions ?? [];
+  const doneList = done.length
+    ? p('Done this quarter', 12, MUTED, 600, 'text-transform:uppercase;letter-spacing:0.5px;margin:6px 0 6px 0;', '20px') +
+      done.map(a => `<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 8px;"><tr>` +
+        `<td style="width:22px;vertical-align:top;padding:9px 0 0 12px;${F}font-size:14px;font-weight:700;color:${UPFG};">&#10003;</td>` +
+        `<td style="background-color:${UPBG};border-radius:10px;padding:9px 12px 9px 6px;">` +
+        p(`${escapeHtml(a.title)}${a.markets.length ? ` <span style="color:${MUTED};font-weight:400;">${a.markets.map(escapeHtml).join(', ')}</span>` : ''}`, 13, INK, 600, '', '20px') +
+        '</td></tr></table>').join('')
+    : '';
+  const reportActions = payload.actions.length || done.length
     ? section('Your actions this quarter', `The actions PerceptionX set out for ${escapeHtml(payload.scope.locationLabel)} in your latest report. This update is written with them in mind.`,
-        payload.actions.map(actionCard).join(''))
+        payload.actions.map(actionCard).join('') + doneList)
     : '';
 
   const sinceSub = prev ? `, with the change since ${escapeHtml(prev)}` : '';

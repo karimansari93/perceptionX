@@ -107,7 +107,7 @@ export interface DigestPayload {
   metrics: {
     eps: DigestMetric & { grade: string };
     sentiment: DigestMetric & { grade: string | null };
-    visibility: DigestMetric & { grade: string | null };
+    visibility: DigestMetric & { grade: string | null; likeForLike?: DigestLikeForLike | null };
     relevance: DigestMetric & { grade: string | null };
   };
   /** One line under the scope card explaining how change is measured. */
@@ -125,6 +125,8 @@ export interface DigestPayload {
   attributes: DigestAttributeRow[];
   /** Published report actions for this reader's markets (organisation-wide ones included). */
   actions: DigestActionRow[];
+  /** Actions for this reader's markets completed this quarter: good news, never a cause of a figure. */
+  doneActions?: Array<{ id: string; title: string; markets: string[] }>;
   narrative: DigestNarrative | null;
   /** Where the button goes: the pre-created chat, or the chat page. */
   chatUrl: string;
@@ -136,4 +138,22 @@ export interface DigestRenderOptions {
   appUrl: string;
   /** logo.dev publishable token (pk_...). */
   logoDevToken: string;
+}
+
+/**
+ * Visibility on the questions asked in both quarters, set when the question
+ * set changed (new questions are at least 5% of this quarter's answers), so
+ * a headline change can be explained by the question set rather than guessed.
+ */
+export interface DigestLikeForLike {
+  /** Visibility on questions asked in both quarters, this quarter and last. */
+  latest: number;
+  previous: number;
+  delta: number;
+  /** Share of this quarter's answers that come from questions not asked last quarter. */
+  newQuestionsSharePct: number;
+  /** Visibility on those new questions. */
+  newQuestionsVisibilityPct: number | null;
+  /** A few of the new questions, so the prose can say what they are about. */
+  newQuestionExamples: string[];
 }

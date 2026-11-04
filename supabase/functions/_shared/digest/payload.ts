@@ -18,7 +18,7 @@ import { buildSourceLines, sourceDisplayName } from '../source-platforms.ts';
 import type { OwnedEntry } from '../source-platforms.ts';
 import { readLineCounts, readOwnedEntries } from '../px-tools/source-lines.ts';
 import type { DomainStatRow } from '../px-tools/source-lines.ts';
-import type { DigestActionRow, DigestAttributeRow, DigestBarRow, DigestGroupRow, DigestPayload } from './types.ts';
+import type { DigestActionRow, DigestAttributeRow, DigestBarRow, DigestGroupRow, DigestLikeForLike, DigestPayload } from './types.ts';
 
 export interface DigestView {
   companyId: string;
@@ -41,15 +41,13 @@ export const titleCase = (s: string) => s.replace(/\b\w/g, c => c.toUpperCase())
 // "Q4 2026" → "Q4 26".
 export const shortQuarter = (q: string) => q.replace(/^(Q\d) \d\d(\d\d)$/, '$1 $2');
 
-// The month the previous wave was collected in, named for prose ("July"):
-// the latest measured month inside the previous quarter.
-export function previousWaveLabel(months: string[], previousQuarter: string | null): string | null {
+// The previous collection, named by quarter ("Q3"), never by month (Karim,
+// 2026-11-04). The year is added only when it differs from this quarter's.
+export function previousWaveLabel(_months: string[], previousQuarter: string | null, latestQuarter?: string | null): string | null {
   if (!previousQuarter) return null;
-  const inPrev = months.filter(m => monthToQuarter(m) === previousQuarter).sort();
-  const last = inPrev[inPrev.length - 1];
-  if (!last) return previousQuarter;
-  const mi = Number(last.slice(5, 7)) - 1;
-  return MONTHS[mi] ?? previousQuarter;
+  const [q, year] = previousQuarter.split(' ');
+  const latestYear = latestQuarter?.split(' ')[1];
+  return latestYear && year && latestYear !== year ? previousQuarter : q;
 }
 
 // Label for the saved location key, from the matched tracked spellings.
@@ -165,6 +163,71 @@ async function domainRows(ctx: ToolContext, r: ResolvedScope, quarter: string): 
 // filter on the competitor cube read.
 const DISCOVERY = 'discovery';
 
+// Visibility on the questions asked in both quarters. When this quarter adds
+// questions, a headline visibility change can come from the new questions
+// rather than from how AI treats the client; this gives the like-for-like
+// figure and the new questions' share, so the prose states the reason
+// instead of guessing one. Scoped to one view and two quarters; paged, and
+// skipped (null) above MAX_LFL_ROWS answers.
+const MAX_LFL_ROWS = 40000;
+const MIN_NEW_QUESTION_SHARE = 5;
+async function visibilityLikeForLike(
+  ctx: ToolContext, r: ResolvedScope, latestQ: string, previousQ: string | null,
+): Promise<DigestLikeForLike | null> {
+  if (!previousQ) return null;
+  const latestMonths = monthsOfQuarter(r, latestQ);
+  const prevMonths = monthsOfQuarter(r, previousQ);
+  if (!latestMonths.length || !prevMonths.length) return null;
+  const rows: Array<{ pid: string; latest: boolean; named: boolean }> = [];
+  for (let from = 0; from < MAX_LFL_ROWS; from += 1000) {
+    let q = ctx.admin.from('prompt_responses')
+      .select('id, confirmed_prompt_id, response_month, company_mentioned, confirmed_prompts!inner(location_context, job_function_context)')
+      .in('company_id', r.scope.companyIds)
+      .in('response_month', latestMonths.concat(prevMonths))
+      .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
+      .or(CLAUDE_PUBLISHED_OR)
+      .order('id')
+      .range(from, from + 999);
+    if (r.buckets) q = q.in('confirmed_prompts.location_context', r.buckets);
+    if (r.jobFunctions) q = q.in('confirmed_prompts.job_function_context', r.jobFunctions);
+    const { data, error } = await q;
+    if (error) { console.warn(`[digest] like-for-like read failed: ${error.message}`); return null; }
+    for (const row of (data || []) as any[]) {
+      rows.push({ pid: String(row.confirmed_prompt_id), latest: latestMonths.includes(String(row.response_month)), named: !!row.company_mentioned });
+    }
+    if (!data || data.length < 1000) {
+      return likeForLikeFromRows(rows, async (ids) => {
+        const { data: prompts } = await ctx.admin.from('confirmed_prompts').select('prompt_text').in('id', ids);
+        return ((prompts || []) as any[]).map(p => String(p.prompt_text || '')).filter(Boolean);
+      });
+    }
+  }
+  return null;
+}
+
+export async function likeForLikeFromRows(
+  rows: Array<{ pid: string; latest: boolean; named: boolean }>,
+  examplesFor: (ids: string[]) => Promise<string[]> = async () => [],
+): Promise<DigestLikeForLike | null> {
+  const prevIds = new Set(rows.filter(x => !x.latest).map(x => x.pid));
+  const latestIds = new Set(rows.filter(x => x.latest).map(x => x.pid));
+  const latestRows = rows.filter(x => x.latest);
+  if (!latestRows.length || !prevIds.size) return null;
+  const share = (xs: typeof rows) => xs.length ? Math.round(100 * xs.filter(x => x.named).length / xs.length) : null;
+  const newRows = latestRows.filter(x => !prevIds.has(x.pid));
+  const newShare = Math.round(100 * newRows.length / latestRows.length);
+  if (newShare < MIN_NEW_QUESTION_SHARE) return null;
+  const latest = share(latestRows.filter(x => prevIds.has(x.pid)));
+  const previous = share(rows.filter(x => !x.latest && latestIds.has(x.pid)));
+  if (latest === null || previous === null) return null;
+  const newIds = Array.from(new Set(newRows.map(x => x.pid))).slice(0, 6);
+  return {
+    latest, previous, delta: latest - previous,
+    newQuestionsSharePct: newShare, newQuestionsVisibilityPct: share(newRows),
+    newQuestionExamples: (await examplesFor(newIds).catch(() => [] as string[])).slice(0, 6),
+  };
+}
+
 async function competitorCounts(ctx: ToolContext, r: ResolvedScope, quarter: string, promptType: string | null) {
   const months = monthsOfQuarter(r, quarter);
   if (!months.length) return [] as Array<{ key: string; quarter: string; count: number }>;
@@ -232,7 +295,7 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
   const previous = scored.length > 1 ? scored[scored.length - 2] : null;
   const latestQ = latest.quarter;
   const previousQ = previous?.quarter ?? null;
-  const previousLabel = previousWaveLabel(r.periods.months, previousQ);
+  const previousLabel = previousWaveLabel(r.periods.months, previousQ, latestQ);
 
   const stats: any[] = rollups?.scope_stats || [];
   const totals = new Map<string, number>();
@@ -352,7 +415,10 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
     .filter(row => monthToQuarter(String(row.response_month)) === latestQ)
     .map(row => String(row.job_function_context || '').trim()).filter(Boolean))).sort();
   const loc = describeLocation(view.locationKey, r.buckets || []);
-  const actions = await reportActions(ctx, r.buckets || []);
+  const [{ open: actions, done: doneActions }, likeForLike] = await Promise.all([
+    reportActions(ctx, r.buckets || [], monthsOfQuarter(r, latestQ)[0] || null),
+    visibilityLikeForLike(ctx, r, latestQ, previousQ).catch(err => { console.warn(`[digest] like-for-like failed: ${err?.message || err}`); return null; }),
+  ]);
 
   return {
     recipient: view.recipient,
@@ -362,14 +428,14 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
     metrics: {
       eps: { value: latest.eps, delta: previous ? latest.eps - previous.eps : null, grade: latest.eps_label },
       sentiment: { value: latest.positive_sentiment_pct, delta: previous ? pointsDelta(latest.positive_sentiment_pct, previous.positive_sentiment_pct) : null, grade: bandLabel('sentiment', latest.positive_sentiment_pct) },
-      visibility: { value: latest.visibility_pct, delta: previous ? pointsDelta(latest.visibility_pct, previous.visibility_pct) : null, grade: bandLabel('visibility', latest.visibility_pct) },
+      visibility: { value: latest.visibility_pct, delta: previous ? pointsDelta(latest.visibility_pct, previous.visibility_pct) : null, grade: bandLabel('visibility', latest.visibility_pct), likeForLike },
       relevance: { value: latest.relevance_pct, delta: previous ? pointsDelta(latest.relevance_pct, previous.relevance_pct) : null, grade: bandLabel('relevance', latest.relevance_pct) },
     },
     comparisonNote: previous
       ? `Change since ${previousLabel} compares this quarter's collection with the previous one, as the dashboard does.`
       : 'This is the first collection for this view, so there is no change to show yet.',
     sentimentChangeHidden: false,
-    byFunction, byMarket, employers, employersNote, employersContext, sources, attributes, actions,
+    byFunction, byMarket, employers, employersNote, employersContext, sources, attributes, actions, doneActions,
     narrative: null,
     chatUrl: view.chatUrl,
     chatNote: view.chatNote,
@@ -426,7 +492,7 @@ export function filterActions(rows: Record<string, any>[], markets: string[]): D
   const rank = (a: Record<string, any>) => PRIORITY_RANK[String(a.priority)] ?? 3;
   return rows
     .filter(a => a.published_at && a.register !== 'retired' && a.register !== 'watch')
-    .filter(a => !['done', 'retired'].includes(String(a.tracking_status || '')))
+    .filter(a => !['done', 'retired'].includes(String(a.tracking_status || '')) && a.work_status !== 'done')
     .filter(a => {
       const ms: string[] = (a.markets || []).map(normMarket).filter(Boolean);
       return !want.size || ms.some(m => want.has(m));
@@ -435,12 +501,33 @@ export function filterActions(rows: Record<string, any>[], markets: string[]): D
     .map(shapeAction);
 }
 
-async function reportActions(ctx: ToolContext, markets: string[]): Promise<DigestActionRow[]> {
+/**
+ * Actions for these markets completed in this quarter (from `since`, the
+ * quarter's first month): done by the owner or by tracking, dated by the
+ * owner's assertion or, failing that, the row's last update.
+ */
+export function filterDoneActions(rows: Record<string, any>[], markets: string[], since: string | null): Array<{ id: string; title: string; markets: string[] }> {
+  if (!since) return [];
+  const want = new Set(markets.map(normMarket));
+  return rows
+    .filter(a => a.published_at && a.register !== 'retired')
+    .filter(a => a.work_status === 'done' || a.tracking_status === 'done')
+    .filter(a => String(a.asserted_done_at || a.updated_at || '') >= since)
+    .filter(a => {
+      const ms: string[] = (a.markets || []).map(normMarket).filter(Boolean);
+      return !want.size || ms.some(m => want.has(m));
+    })
+    .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')))
+    .map(a => ({ id: String(a.id || ''), title: String(a.title || ''), markets: (a.markets || []).map((m: string) => displayMarket(String(m))) }));
+}
+
+async function reportActions(ctx: ToolContext, markets: string[], since: string | null): Promise<{ open: DigestActionRow[]; done: Array<{ id: string; title: string; markets: string[] }> }> {
   const { data, error } = await ctx.admin
     .from('company_actions')
-    .select('id, organization_id, register, title, cycle_raised, action_number, problem, recommendation, priority, priority_reason, lifts, owner_name, tracking_status, markets, published_at')
+    .select('id, organization_id, register, title, cycle_raised, action_number, problem, recommendation, priority, priority_reason, lifts, owner_name, tracking_status, work_status, asserted_done_at, updated_at, markets, published_at')
     .eq('organization_id', ctx.organizationId)
     .not('published_at', 'is', null);
-  if (error) { console.warn(`[digest] actions read failed: ${error.message}`); return []; }
-  return filterActions((data || []).filter((a: any) => a.organization_id === ctx.organizationId), markets);
+  if (error) { console.warn(`[digest] actions read failed: ${error.message}`); return { open: [], done: [] }; }
+  const rows = (data || []).filter((a: any) => a.organization_id === ctx.organizationId);
+  return { open: filterActions(rows, markets), done: filterDoneActions(rows, markets, since) };
 }
