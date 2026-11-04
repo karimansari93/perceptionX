@@ -152,8 +152,20 @@ export interface DigestLikeForLike {
   delta: number;
   /** Share of this quarter's answers that come from questions not asked last quarter. */
   newQuestionsSharePct: number;
-  /** Visibility on those new questions. */
+  /**
+   * Internal only, never quoted: visibility on the new questions, which
+   * blends open employer questions (client rarely named) with questions
+   * about the client (always named), so it describes neither.
+   */
   newQuestionsVisibilityPct: number | null;
+  /** Share of answers that are open employer questions ("which companies..."), this quarter and last. */
+  openQuestionsSharePct: number;
+  openQuestionsSharePrevPct: number;
+  /** Visibility on open employer questions, this quarter and last. */
+  openQuestionsVisibilityPct: number | null;
+  openQuestionsVisibilityPrevPct: number | null;
+  /** Visibility on questions that ask about the client, this quarter. */
+  clientQuestionsVisibilityPct: number | null;
   /** A few of the new questions, so the prose can say what they are about. */
   newQuestionExamples: string[];
 }
