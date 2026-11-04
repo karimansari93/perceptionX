@@ -59,6 +59,6 @@ export interface DigestSendTestedResult {
   testedAt: string;
 }
 
-/** Send one member exactly the email the caller last tested for them (same figures and prose). */
+/** Send one member exactly the email the caller last previewed or tested for them (same figures and prose). */
 export const sendTestedDigest = (memberId: string) =>
   call<DigestSendTestedResult>({ action: 'send_tested', memberId, confirm: true });

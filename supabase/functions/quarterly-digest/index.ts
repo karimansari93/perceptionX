@@ -171,6 +171,14 @@ serve(async (req) => {
       if (!member) return json({ error: 'Member not found' }, 404);
       if (action === 'preview') {
         const { payload, html, subject } = await compose(admin, member, null);
+        // Kept so "Send to <member>" can send exactly this version (figures
+        // and prose) without writing the prose again. Not an email: no
+        // Resend id, and only send_tested reads it.
+        const { error: pErr } = await admin.from('quarterly_digest_sends').insert({
+          organization_id: member.organizationId, member_id: member.memberId, user_id: member.userId,
+          email: member.email, period: payload.period.quarter, subject, payload, sent_by: user.id, status: 'preview',
+        });
+        if (pErr) console.warn(`[digest] preview log failed: ${pErr.message}`);
         return json({ html, subject, payload });
       }
       const callerEmail = user.email || '';
@@ -188,21 +196,21 @@ serve(async (req) => {
       return json({ sentTo: callerEmail, subject, resendId, conversationId, period: payload.period.quarter });
     }
 
-    // Send one member exactly the email the caller last tested for them: the
-    // stored test payload (figures and prose) is re-rendered with a chat
-    // thread of the member's own, so what was checked is what goes out. The
-    // prose is not rewritten. Only the caller's own test from the last three
-    // days counts.
+    // Send one member exactly the email the caller last previewed or tested
+    // for them: the stored payload (figures and prose) is re-rendered with a
+    // chat thread of the member's own, so what was checked is what goes out.
+    // The prose is not rewritten. Only the caller's own preview or test from
+    // the last three days counts.
     if (action === 'send_tested') {
       if (body?.confirm !== true) return json({ error: 'Pass confirm: true to send' }, 400);
       const [member] = await loadMembers(admin, { memberId: String(body?.memberId || '') });
       if (!member) return json({ error: 'Member not found' }, 404);
       const since = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
       const { data: tested, error: tErr } = await admin.from('quarterly_digest_sends')
-        .select('id, payload, created_at').eq('member_id', member.memberId).eq('status', 'test').eq('sent_by', user.id)
+        .select('id, payload, created_at').eq('member_id', member.memberId).in('status', ['test', 'preview']).eq('sent_by', user.id)
         .gte('created_at', since).order('created_at', { ascending: false }).limit(1).maybeSingle();
       if (tErr) throw new Error(`Test send read failed: ${tErr.message}`);
-      if (!tested) return json({ error: 'Send yourself a test of this email first (within the last three days).' }, 400);
+      if (!tested) return json({ error: 'Open the preview of this email first (within the last three days).' }, 400);
       const payload = tested.payload as DigestPayload;
       payload.recipient = { firstName: member.firstName, email: member.email };
       payload.chatUrl = `${APP_URL}/chat`;
