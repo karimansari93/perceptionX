@@ -32,6 +32,13 @@ Hard rules:
 - Never name an AI assistant, model or vendor. Say "AI" or "AI assistants".
 - Explain every change thematically: which attributes moved, and, from the evidence, what AI now says within them that it did not say last quarter (or says less). Never explain a change by which AI assistants answered, the mix of assistants, the collection or the method.
 - The share of answers that name the client is "visibility". Never write "naming", "named in" or "naming rate".
+- Name collections by quarter: "Q3", "Q4", "since Q3", "vs Q3". Never name a month.
+- Relevance is a score out of 100 for how current the sources AI cites are. Write it without a percent sign ("rose 11 points to 80"). Never describe it as how well answers match what candidates ask.
+- State a cause only when the payload or evidence shows it. A cause is a question, theme or source that changed between the quarters and appears in the data you were given. When the data does not show why a figure moved, report the movement without a cause. Never invent one.
+- When metrics.visibility.likeForLike is present, this quarter added questions. Explain the visibility change with it and nothing else: the headline figure and its change; that this quarter added new questions, described in a few words from newQuestionExamples, where the client has a visibility of newQuestionsVisibilityPct; and the change on the questions asked in both quarters (likeForLike.previous to likeForLike.latest). Never describe the client as a "more specific fit" or similar.
+- Say that AI draws on a source, never that a source sets, drives, causes or caps a figure. Never say where a theme comes from (reviews, forums, owned pages, "not from owned pages") unless the evidence lists the sources of the answers carrying that theme.
+- When an action's own text gives a figure that differs from the payload, use the payload's figure.
+- payload.doneActions are actions completed this quarter for this reader. You may mention one in a sentence as progress. Never claim it moved a figure.
 - functionsNote and marketsNote never restate the table's figures one by one; the reader can see the table. Say what explains the differences, or the shared movement, in attribute and theme terms, with at most two figures. When the groups move together, say so in one sentence and give the shared thematic cause.
 - Never use an em dash or en dash. Use commas, full stops or colons.
 - Never mention raw counts of answers, responses, prompts or themes.
@@ -107,6 +114,10 @@ function parseJsonReply(text: string): any {
 // Words the prose must not use: "naming" for visibility, and AI assistant
 // names (changes are explained by attribute and theme, never by assistant).
 export const BANNED_PROSE = /\bnaming\b|\bnamed in\b|chatgpt|openai|perplexity|gemini|ai overviews?|ai mode|\bclaude\b|\bcopilot\b/i;
+// Months named as a period ("since July", "vs October"): collections are named by quarter.
+export const MONTH_PERIOD = /\b(since|vs\.?|versus|from|in|than)\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/i;
+// Relevance is a score, not a share: "relevance ... 80%".
+export const RELEVANCE_PCT = /relevance[^.]{0,40}?\b\d{1,3}%/i;
 
 export function validateNarrative(raw: any, payload: DigestPayload, opts: { lenient?: boolean } = {}): DigestNarrative {
   const callouts = Array.isArray(raw?.callouts) ? raw.callouts : [];
@@ -124,6 +135,9 @@ export function validateNarrative(raw: any, payload: DigestPayload, opts: { leni
   if (banned && !opts.lenient) {
     throw new Error(`the prose says "${banned[0]}"; say "visibility" for how often AI names the client, and explain changes by attribute and theme, never by AI assistant`);
   }
+  const month = prose.match(MONTH_PERIOD);
+  if (month && !opts.lenient) throw new Error(`the prose says "${month[0]}"; name collections by quarter ("since Q3"), never by month`);
+  if (RELEVANCE_PCT.test(prose) && !opts.lenient) throw new Error('the prose gives relevance as a percentage; relevance is a score out of 100 ("80"), for how current the sources AI cites are');
   const longTitles = callouts.filter((c: any) => String(c?.title ?? '').trim().length > LIMITS.title).length;
   if (longTitles && !opts.lenient) {
     throw new Error(`${longTitles} callout title(s) ran past ${LIMITS.title} characters; a title is one short headline, not a sentence`);
@@ -234,6 +248,12 @@ export function digestMarkdown(payload: DigestPayload): string {
     for (const a of payload.actions) {
       const title = a.id ? `[${a.title}](/dashboard/actions?action=${a.id})` : a.title;
       lines.push(`- **${a.number ? `${a.number} ` : ''}${title}**${a.priority ? ` (${a.priority} priority)` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
+    }
+  }
+  if (payload.doneActions?.length) {
+    lines.push('', '### Done this quarter');
+    for (const a of payload.doneActions) {
+      lines.push(`- ${a.id ? `[${a.title}](/dashboard/actions?action=${a.id})` : a.title}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}`);
     }
   }
   if (payload.employers.length) {

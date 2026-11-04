@@ -50,3 +50,15 @@ export const sendDigestTest = (memberId: string) => call<DigestTestResult>({ act
 /** Send to every member on the organization's list. */
 export const sendDigestToList = (organizationId: string) =>
   call<DigestSendResult>({ action: 'send', organizationId, confirm: true });
+
+export interface DigestSendTestedResult {
+  sentTo: string;
+  subject: string;
+  resendId: string;
+  conversationId: string | null;
+  testedAt: string;
+}
+
+/** Send one member exactly the email the caller last tested for them (same figures and prose). */
+export const sendTestedDigest = (memberId: string) =>
+  call<DigestSendTestedResult>({ action: 'send_tested', memberId, confirm: true });

@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
 import { digestSubject, renderDigestHtml, sentimentBadge } from './template.ts';
-import { coverageRows, describeLocation, displayMarket, filterActions, groupRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
+import { coverageRows, describeLocation, displayMarket, filterActions, filterDoneActions, groupRows, likeForLikeFromRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
 import { cap, capTitle, digestMarkdown, evidenceAttributes, narrativeFromReply, validateNarrative } from './narrative.ts';
 import type { DigestPayload } from './types.ts';
 import { bandLabel } from '../px-tools/bands.ts';
@@ -88,7 +88,8 @@ Deno.test('escapes recipient and brand text', () => {
 
 Deno.test('payload helpers', () => {
   assertEquals(shortQuarter('Q4 2026'), 'Q4 26');
-  assertEquals(previousWaveLabel(['2026-07-01', '2026-08-01', '2026-10-01'], 'Q3 2026'), 'August');
+  assertEquals(previousWaveLabel(['2026-07-01', '2026-08-01', '2026-10-01'], 'Q3 2026', 'Q4 2026'), 'Q3');
+  assertEquals(previousWaveLabel(['2025-10-01', '2026-10-01'], 'Q4 2025', 'Q4 2026'), 'Q4 2025');
   assertEquals(previousWaveLabel(['2026-10-01'], null), null);
   assertEquals(describeLocation('region:emea', ['Germany', 'Poland']), { label: 'EMEA', preposition: 'across' });
   assertEquals(describeLocation('india', ['India']), { label: 'India', preposition: 'in' });
@@ -321,4 +322,49 @@ Deno.test('the job function table shows sentiment only', () => {
   assert(!section.includes('Visibility'));
   assert(!section.includes('70%'));
   assert(!digestMarkdown({ ...payload, byFunction: rows as any }).includes('visibility 70%'));
+});
+
+Deno.test('like-for-like visibility separates new questions from questions asked in both quarters', async () => {
+  const rows: Array<{ pid: string; latest: boolean; named: boolean }> = [];
+  const add = (pid: string, latest: boolean, named: number, total: number) => {
+    for (let i = 0; i < total; i++) rows.push({ pid, latest, named: i < named });
+  };
+  add('a', false, 74, 100);   // asked last quarter: 74%
+  add('a', true, 75, 100);    // same question this quarter: 75%
+  add('new', true, 18, 37);   // a new question: about 27% of this quarter's answers, 49% named
+  const lfl = await likeForLikeFromRows(rows, async () => ['Best global capability centres in Chennai']);
+  assertEquals(lfl?.previous, 74);
+  assertEquals(lfl?.latest, 75);
+  assertEquals(lfl?.delta, 1);
+  assertEquals(lfl?.newQuestionsSharePct, 27);
+  assertEquals(lfl?.newQuestionsVisibilityPct, 49);
+  assertEquals(lfl?.newQuestionExamples, ['Best global capability centres in Chennai']);
+  // Same questions both quarters: nothing to explain.
+  assertEquals(await likeForLikeFromRows(rows.filter(r => r.pid === 'a')), null);
+});
+
+Deno.test('done actions this quarter are listed, open ones stay in the open list', () => {
+  const rows = [
+    { id: 'amb', title: 'FBS: AmbitionBox', register: 'regional', work_status: 'done', tracking_status: 'done', updated_at: '2026-11-03T10:00:00Z', markets: ['India'], published_at: '2026-10-01', recommendation: 'x', lifts: [] },
+    { id: 'old', title: 'Done in Q3', register: 'regional', work_status: 'done', tracking_status: 'done', updated_at: '2026-08-01T10:00:00Z', markets: ['India'], published_at: '2026-07-01', recommendation: 'x', lifts: [] },
+    { id: 'ca', title: 'Canada done', register: 'act_now', work_status: 'done', tracking_status: 'done', updated_at: '2026-10-26T10:00:00Z', markets: ['Canada'], published_at: '2026-10-01', recommendation: 'x', lifts: [] },
+    { id: 'open', title: 'Careers page', register: 'regional', work_status: 'open', tracking_status: 'open', markets: ['India'], published_at: '2026-10-01', recommendation: 'x', lifts: [] },
+    { id: 'wip-done', title: 'Owner says done', register: 'regional', work_status: 'done', tracking_status: 'in_progress', updated_at: '2026-11-01T10:00:00Z', markets: ['India'], published_at: '2026-10-01', recommendation: 'x', lifts: [] },
+  ];
+  assertEquals(filterDoneActions(rows, ['India'], '2026-10-01').map(a => a.id), ['amb', 'wip-done']);
+  assertEquals(filterActions(rows, ['India']).map(a => a.title), ['Careers page']);
+  const html = renderDigestHtml({ ...payload, actions: [], doneActions: [{ id: 'amb', title: 'FBS: AmbitionBox', markets: ['India'] }] }, opts);
+  assertStringIncludes(html, 'Done this quarter');
+  assertStringIncludes(html, 'FBS: AmbitionBox');
+  assertStringIncludes(digestMarkdown({ ...payload, doneActions: [{ id: 'amb', title: 'FBS: AmbitionBox', markets: ['India'] }] }), '### Done this quarter');
+});
+
+Deno.test('months as periods and relevance as a percentage are sent back', () => {
+  const ok = { preheader: 'p', action: 'a', callouts: [{ title: 't', body: 'Relevance rose 11 points to 80 since Q3.' }, { title: 'u', body: 'b' }] };
+  validateNarrative(ok, payload);
+  for (const bad of ['Visibility is down 5 points since July.', 'Relevance is 80%, up 11 points.']) {
+    let threw = '';
+    try { validateNarrative({ ...ok, callouts: [{ title: 't', body: bad }, { title: 'u', body: 'b' }] }, payload); } catch (e) { threw = (e as Error).message; }
+    assert(threw.length > 0, bad);
+  }
 });

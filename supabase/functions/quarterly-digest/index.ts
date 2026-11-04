@@ -42,7 +42,7 @@ const FROM = Deno.env.get('DIGEST_FROM_EMAIL') || 'Karim at PerceptionX <karim@p
 const REPLY_TO = Deno.env.get('DIGEST_REPLY_TO') || 'karim@perceptionx.ai';
 const SEND_BATCH = 20;
 
-type Action = 'preview' | 'send_test' | 'send';
+type Action = 'preview' | 'send_test' | 'send' | 'send_tested';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -186,6 +186,38 @@ serve(async (req) => {
       });
       if (logErr) console.warn(`[digest] test send log failed: ${logErr.message}`);
       return json({ sentTo: callerEmail, subject, resendId, conversationId, period: payload.period.quarter });
+    }
+
+    // Send one member exactly the email the caller last tested for them: the
+    // stored test payload (figures and prose) is re-rendered with a chat
+    // thread of the member's own, so what was checked is what goes out. The
+    // prose is not rewritten. Only the caller's own test from the last three
+    // days counts.
+    if (action === 'send_tested') {
+      if (body?.confirm !== true) return json({ error: 'Pass confirm: true to send' }, 400);
+      const [member] = await loadMembers(admin, { memberId: String(body?.memberId || '') });
+      if (!member) return json({ error: 'Member not found' }, 404);
+      const since = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+      const { data: tested, error: tErr } = await admin.from('quarterly_digest_sends')
+        .select('id, payload, created_at').eq('member_id', member.memberId).eq('status', 'test').eq('sent_by', user.id)
+        .gte('created_at', since).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (tErr) throw new Error(`Test send read failed: ${tErr.message}`);
+      if (!tested) return json({ error: 'Send yourself a test of this email first (within the last three days).' }, 400);
+      const payload = tested.payload as DigestPayload;
+      payload.recipient = { firstName: member.firstName, email: member.email };
+      payload.chatUrl = `${APP_URL}/chat`;
+      const conversationId = await createDigestChat(admin, member.organizationId, member.userId, payload);
+      if (conversationId) payload.chatUrl = `${APP_URL}/chat?c=${conversationId}`;
+      const html = renderDigestHtml(payload, { appUrl: ASSET_URL, logoDevToken: LOGO_DEV_TOKEN });
+      const subject = digestSubject(payload);
+      const resendId = await sendEmail(member.email, subject, html);
+      const { error: logErr } = await admin.from('quarterly_digest_sends').insert({
+        organization_id: member.organizationId, member_id: member.memberId, user_id: member.userId,
+        email: member.email, period: payload.period.quarter, subject, payload, resend_id: resendId,
+        conversation_id: conversationId, sent_by: user.id, status: 'sent',
+      });
+      if (logErr) console.warn(`[digest] send log failed for ${member.email}: ${logErr.message}`);
+      return json({ sentTo: member.email, subject, resendId, conversationId, testedAt: tested.created_at });
     }
 
     if (action === 'send') {
