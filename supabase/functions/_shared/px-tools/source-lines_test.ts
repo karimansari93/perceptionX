@@ -6,7 +6,7 @@
 import { assert, assertEquals, assertRejects } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
 import { buildSourceLines, parseOwnedEntries } from '../source-platforms.ts';
 import {
-  MAX_UNION_SCOPE_ANSWERS, pagesForLine, readLineCounts, readToolSourceLines, UNION_UNAVAILABLE_NOTE,
+  MAX_UNION_SCOPE_ANSWERS, ownershipOf, pagesForLine, readLineCounts, readToolSourceLines, UNION_UNAVAILABLE_NOTE,
 } from './source-lines.ts';
 import type { DomainStatRow } from './source-lines.ts';
 
@@ -154,6 +154,9 @@ Deno.test('tool lines: owned marked, platforms merged, ownership read failure is
   assertEquals(byKey.get('linkedin:owned')?.line.name, 'LinkedIn: your pages and posts');
   assertEquals(byKey.get('linkedin:owned')?.line.owned, true);
   assertEquals(byKey.get('linkedin:other')?.line.owned, false);
+  assertEquals(ownershipOf(byKey.get('linkedin:owned')!.line), 'owned');
+  assertEquals(ownershipOf(byKey.get('linkedin:other')!.line), 'partly_owned');
+  assertEquals(ownershipOf(byKey.get('glassdoor')!.line), 'third_party');
   assertEquals(byKey.get('careers.ford.com')?.line.owned, true);
   assertEquals(byKey.get('glassdoor')?.citing, 262);
   assertEquals(rows[0].line.key, 'linkedin:other');                 // sorted by coverage, largest first

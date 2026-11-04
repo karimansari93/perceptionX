@@ -117,13 +117,15 @@ const metricRow = (a: string, b: string) =>
 
 const ownedTag = `<span style="${F}font-size:10px;font-weight:700;color:${NAVY};border:1px solid ${NAVY};border-radius:999px;padding:1px 6px;margin-left:6px;vertical-align:1px;letter-spacing:0.3px;">OWNED</span>`;
 
+const partlyOwnedTag = `<span style="${F}font-size:10px;font-weight:700;color:#64748B;border:1px solid #94A3B8;border-radius:999px;padding:1px 6px;margin-left:6px;vertical-align:1px;letter-spacing:0.3px;">PARTLY OWNED</span>`;
+
 function barName(row: DigestBarRow): string {
   const name = escapeHtml(row.name);
   const label = DOMAIN_RE.test(name) && !row.you
     ? `<a href="https://${name}" style="color:${INK};text-decoration:none;" target="_blank">${name}</a>`
     : name;
   DOMAIN_RE.lastIndex = 0;
-  return label + (row.you ? ' (You)' : '') + (row.owned ? ownedTag : '');
+  return label + (row.you ? ' (You)' : '') + (row.owned ? ownedTag : row.partlyOwned ? partlyOwnedTag : '');
 }
 
 function barRow(row: DigestBarRow, token: string): string {
@@ -288,7 +290,7 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     ? section('Employers AI names alongside you', `${escapeHtml(payload.employersNote)}${sinceSub}.${payload.employersContext ? ' ' + escapeHtml(payload.employersContext) : ''}`, barList(payload.employers.map(r => barRow(r, token))))
     : '';
   const sources = payload.sources.length
-    ? section('Sources AI reads', `Share of answers citing each source${sinceSub}.${payload.sources.some(s => s.owned) ? ' Your own sites and pages are marked.' : ''}`, barList(payload.sources.map(r => barRow(r, token))))
+    ? section('Sources AI reads', `Share of answers citing each source${sinceSub}.${payload.sources.some(s => s.owned || s.partlyOwned) ? ' Your own sites and pages are marked.' : ''}`, barList(payload.sources.map(r => barRow(r, token))))
     : '';
 
   const themeSub = `What AI talks about when it describes working at ${escapeHtml(payload.brand.name)}, and how positively.${payload.sentimentChangeHidden ? ' Change resumes next quarter.' : ''}`;

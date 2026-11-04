@@ -19,6 +19,8 @@ export interface DigestBarRow {
   delta: number | null;
   /** Client-owned site (rendered in navy). */
   owned?: boolean;
+  /** The client owns some pages on this platform, but not this line. */
+  partlyOwned?: boolean;
   /** The client itself in the employers list. */
   you?: boolean;
 }

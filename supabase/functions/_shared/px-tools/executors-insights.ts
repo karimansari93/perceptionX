@@ -29,7 +29,7 @@ import {
   labelQuarter, METHODOLOGY_NOTES, monthToQuarter, pct, pointsDelta, rate1, sentimentPct,
   sortQuarters, toQuarterly, pageEntry, PAGES_UNAVAILABLE_NOTE,
 } from './helpers.ts';
-import { pagesForLine, readOwnedEntries, readToolSourceLines, SOURCE_LINE_NOTES } from './source-lines.ts';
+import { ownershipOf, pagesForLine, readOwnedEntries, readToolSourceLines, SOURCE_LINE_NOTES } from './source-lines.ts';
 import { isOwnedHost } from '../source-platforms.ts';
 import { answersByQuarter, metaFor, resolveScope, scopeSuffix } from './scope.ts';
 import type { ResolvedScope, ToolContext } from './scope.ts';
@@ -542,6 +542,7 @@ export async function getSources(
       domain: line.domain,
       name: line.name,
       owned: line.owned,
+      ownership: ownershipOf(line),
       cited_in_pct_of_answers: pct(citing, totalResponses),
       answer_gap_pct_of_answers: pct(gap, totalResponses),   // cited while the company was absent
       gap_rate_pct: pct(gap, citing),                        // of its citing answers, % where company absent

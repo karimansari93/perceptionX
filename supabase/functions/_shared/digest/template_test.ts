@@ -322,3 +322,17 @@ Deno.test('the job function table shows sentiment only', () => {
   assert(!section.includes('70%'));
   assert(!digestMarkdown({ ...payload, byFunction: rows as any }).includes('visibility 70%'));
 });
+
+Deno.test('sources: owned and partly owned platforms carry their own badge', () => {
+  const html = renderDigestHtml({
+    ...payload,
+    sources: [
+      { domain: 'linkedin.com', name: 'LinkedIn: your pages and posts', pct: 30, delta: 4, owned: true },
+      { domain: 'linkedin.com', name: 'LinkedIn: other', pct: 33, delta: null, partlyOwned: true },
+      { domain: 'glassdoor.com', name: 'Glassdoor', pct: 26, delta: null },
+    ],
+  }, opts);
+  assert(html.includes('>OWNED</span>'));
+  assertEquals(html.split('>PARTLY OWNED</span>').length - 1, 1);
+  assertEquals(html.split('>OWNED</span>').length - 1, 1);   // the third-party line has neither
+});

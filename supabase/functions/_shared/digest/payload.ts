@@ -319,7 +319,7 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
   const sources: DigestBarRow[] = coverageRows(sourceRows, totals, latestQ, previousQ)
     .map(s => {
       const line = lineByKey.get(s.key)!;
-      return { domain: line.domain, name: line.name, pct: s.pct, delta: s.delta, owned: line.owned };
+      return { domain: line.domain, name: line.name, pct: s.pct, delta: s.delta, owned: line.owned, partlyOwned: line.partlyOwned };
     });
 
   const brandLower = r.scope.brandName.trim().toLowerCase();
