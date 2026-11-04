@@ -215,8 +215,13 @@ function groupTable(rows: DigestGroupRow[], head: string, hideSentimentChange: b
     rows.map(r => [escapeHtml(r.name), sentimentBadge(r.positivePct), pctText(r.namedPct), chg(r.visibilityDelta)]));
 }
 
+/** The inbox preview line under the subject: "Here's your PerceptionX Q4 26 update for Ford Business Solutions in India." */
+export function previewLine(payload: DigestPayload): string {
+  return `Here's your PerceptionX ${payload.period.short} update for ${payload.brand.name} ${payload.scope.preposition} ${payload.scope.locationLabel}.`;
+}
+
 export function digestSubject(payload: DigestPayload): string {
-  return `Your ${payload.period.short} Update`;
+  return `PerceptionX ${payload.period.short} Update`;
 }
 
 export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptions): string {
@@ -326,9 +331,11 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     p(`<a href="${escapeHtml(withUtm('https://perceptionx.ai'))}" style="color:#9ca3af;text-decoration:underline;">perceptionx.ai</a><br><span style="font-size:11px;">© ${year} PerceptionX FZ-LLC</span>`, 12, '#9ca3af', 400, 'text-align:center;', '20px') +
     '</td></tr></tbody></table>';
 
-  const preheader = n?.preheader
-    ? `<div style="display:none;overflow:hidden;line-height:1px;opacity:0;max-height:0;max-width:0;">${escapeHtml(n.preheader)}</div>`
-    : '';
+  // The inbox preview line: one fixed, standard sentence (Karim, 2026-11-04),
+  // then invisible spacers so the inbox does not fill the rest of the line
+  // with the start of the email body.
+  const preheader = `<div style="display:none;overflow:hidden;line-height:1px;opacity:0;max-height:0;max-width:0;">` +
+    `${escapeHtml(previewLine(payload))}${'&#847;&zwnj;&nbsp;'.repeat(90)}</div>`;
 
   return '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">' +
     '<html dir="ltr" lang="en"><head><meta content="width=device-width, initial-scale=1" name="viewport"><meta content="text/html; charset=UTF-8" http-equiv="Content-Type"><meta name="x-apple-disable-message-reformatting">' +
