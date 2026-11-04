@@ -178,10 +178,10 @@ async function visibilityLikeForLike(
   const latestMonths = monthsOfQuarter(r, latestQ);
   const prevMonths = monthsOfQuarter(r, previousQ);
   if (!latestMonths.length || !prevMonths.length) return null;
-  const rows: Array<{ pid: string; latest: boolean; named: boolean }> = [];
+  const rows: Array<{ pid: string; latest: boolean; named: boolean; open?: boolean }> = [];
   for (let from = 0; from < MAX_LFL_ROWS; from += 1000) {
     let q = ctx.admin.from('prompt_responses')
-      .select('id, confirmed_prompt_id, response_month, company_mentioned, confirmed_prompts!inner(location_context, job_function_context)')
+      .select('id, confirmed_prompt_id, response_month, company_mentioned, confirmed_prompts!inner(location_context, job_function_context, prompt_type)')
       .in('company_id', r.scope.companyIds)
       .in('response_month', latestMonths.concat(prevMonths))
       .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
@@ -193,7 +193,10 @@ async function visibilityLikeForLike(
     const { data, error } = await q;
     if (error) { console.warn(`[digest] like-for-like read failed: ${error.message}`); return null; }
     for (const row of (data || []) as any[]) {
-      rows.push({ pid: String(row.confirmed_prompt_id), latest: latestMonths.includes(String(row.response_month)), named: !!row.company_mentioned });
+      rows.push({
+        pid: String(row.confirmed_prompt_id), latest: latestMonths.includes(String(row.response_month)), named: !!row.company_mentioned,
+        open: String(row.confirmed_prompts?.prompt_type || '') === DISCOVERY,
+      });
     }
     if (!data || data.length < 1000) {
       return likeForLikeFromRows(rows, async (ids) => {
@@ -206,7 +209,7 @@ async function visibilityLikeForLike(
 }
 
 export async function likeForLikeFromRows(
-  rows: Array<{ pid: string; latest: boolean; named: boolean }>,
+  rows: Array<{ pid: string; latest: boolean; named: boolean; open?: boolean }>,
   examplesFor: (ids: string[]) => Promise<string[]> = async () => [],
 ): Promise<DigestLikeForLike | null> {
   const prevIds = new Set(rows.filter(x => !x.latest).map(x => x.pid));
@@ -220,10 +223,20 @@ export async function likeForLikeFromRows(
   const latest = share(latestRows.filter(x => prevIds.has(x.pid)));
   const previous = share(rows.filter(x => !x.latest && latestIds.has(x.pid)));
   if (latest === null || previous === null) return null;
-  const newIds = Array.from(new Set(newRows.map(x => x.pid))).slice(0, 6);
+  // Examples come from the new open employer questions when there are any:
+  // those are the ones that move the headline.
+  const newOpen = newRows.filter(x => x.open);
+  const newIds = Array.from(new Set((newOpen.length ? newOpen : newRows).map(x => x.pid))).slice(0, 6);
+  const prevRows = rows.filter(x => !x.latest);
+  const sharePct = (part: number, whole: number) => whole ? Math.round(100 * part / whole) : 0;
   return {
     latest, previous, delta: latest - previous,
     newQuestionsSharePct: newShare, newQuestionsVisibilityPct: share(newRows),
+    openQuestionsSharePct: sharePct(latestRows.filter(x => x.open).length, latestRows.length),
+    openQuestionsSharePrevPct: sharePct(prevRows.filter(x => x.open).length, prevRows.length),
+    openQuestionsVisibilityPct: share(latestRows.filter(x => x.open)),
+    openQuestionsVisibilityPrevPct: share(prevRows.filter(x => x.open)),
+    clientQuestionsVisibilityPct: share(latestRows.filter(x => !x.open)),
     newQuestionExamples: (await examplesFor(newIds).catch(() => [] as string[])).slice(0, 6),
   };
 }

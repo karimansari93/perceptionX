@@ -377,3 +377,21 @@ Deno.test('the inbox preview line is one standard sentence, padded so the body d
   assertStringIncludes(html, '&#847;&zwnj;&nbsp;'.repeat(90));
   assert(!html.includes(payload.narrative!.preheader));
 });
+
+Deno.test('visibility change is explained by the share of open employer questions', async () => {
+  const rows: Array<{ pid: string; latest: boolean; named: boolean; open?: boolean }> = [];
+  const add = (pid: string, latest: boolean, named: number, total: number, open: boolean) => {
+    for (let i = 0; i < total; i++) rows.push({ pid, latest, named: i < named, open });
+  };
+  // Last quarter: 75% questions about the client (named 99%), 25% open questions (named 0%).
+  add('about', false, 74, 75, false); add('open', false, 0, 25, true);
+  // This quarter: same questions, plus new open questions about capability centres.
+  add('about', true, 68, 68, false); add('open', true, 0, 18, true); add('gcc', true, 0, 14, true);
+  const lfl = await likeForLikeFromRows(rows, async (ids) => ids.includes('gcc') ? ['Best Global Capability Centres for career growth'] : []);
+  assertEquals(lfl?.openQuestionsSharePrevPct, 25);
+  assertEquals(lfl?.openQuestionsSharePct, 32);
+  assertEquals(lfl?.openQuestionsVisibilityPct, 0);
+  assertEquals(lfl?.openQuestionsVisibilityPrevPct, 0);
+  assertEquals(lfl?.clientQuestionsVisibilityPct, 100);
+  assertEquals(lfl?.newQuestionExamples, ['Best Global Capability Centres for career growth']);
+});
