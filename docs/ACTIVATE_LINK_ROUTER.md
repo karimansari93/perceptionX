@@ -144,7 +144,8 @@ activate_links
 activate_link_events
   id, link_id
   session_id uuid             -- random client-generated UUID per pageview (see below)
-  event_type                  -- 'open' | 'market_declared' | 'entity_declared' | 'platform_click'
+  event_type                  -- 'open' | 'market_declared' | 'entity_declared' | 'profile_declared' | 'platform_click'
+                              -- page signals (shown, expanded, return, shared) live in amplify_page_events
   declared_market_code null, declared_entity_id null
   platform null, tier null, occurred_at
 
@@ -382,9 +383,44 @@ Security 13.9%, Wellbeing & Balance 12.2%, Career Opportunities 12.0%), kununu
 surfacing rate in DE/CH, and Relevance per affected market.
 
 **Add a platform-side denominator:** at launch, snapshot the review count on
-each destination profile (cheap periodic manual/scripted count). Cohort claims
+each destination profile (manual count, see Outcome tracking below). Cohort claims
 then rest on platform-side volume + our citation and sentiment data, not
 citations alone.
+
+## Outcome tracking (built 2026-11-10)
+
+Migration `20261110120000_amplify_outcome_tracking.sql`, admin screen in
+`src/components/admin/AmplifyOutcomes.tsx` (shown in the Amplify tab).
+
+**Page signals** live in `amplify_page_events`, written only through
+`amplify_log_event` and joined to `activate_link_events` on `session_id`. The
+core funnel table and its RPC are untouched, so if this part ever breaks, only
+these signals are lost.
+
+| Signal | When it fires |
+|---|---|
+| `routes_shown` | The options page renders; carries the platforms shown, in order |
+| `platform_expanded` | A platform card is opened to read the how-to |
+| `platform_return` | The recipient comes back to the tab after a click; carries seconds away |
+| `page_shared` | The footer share button: `native` (share sheet) or `copy` |
+
+Time away is a rough proxy: only counted once the page was actually hidden or
+blurred, never logged for someone who doesn't come back, and only reported in
+buckets (under 30s, 30s to 2 min, 2 to 10 min, over 10 min). It is not a
+record of what anyone did. The honesty line stays true.
+
+`admin_amplify_link_insights` gives the step-by-step funnel, per-platform shown
+→ opened → clicked → returned, time-away buckets and shares per link, with the
+same k-floor: below 5 sessions that picked a country, only the funnel totals
+come back. `admin_amplify_weekly_clicks` gives weekly click-through sessions per
+market × platform for the org, withheld entirely below the floor.
+
+**Review counts** live in `activate_review_snapshots`: one row per destination
+profile per day, entered by hand in the admin screen (total reviews, optional
+rating). Growth is reviews per week before the first link vs since, using the
+last pre-launch count as the start of the after window. Enter counts by hand:
+Glassdoor and Indeed forbid automated collection. To a client, quote the change
+in pace as a percentage, with Karim's sign-off.
 
 ## Hard constraints
 

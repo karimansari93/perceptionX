@@ -30,6 +30,7 @@ import {
   ChevronLeft,
   ExternalLink,
   Search,
+  Share2,
 } from 'lucide-react';
 import { useMetaTags } from '@/hooks/useMetaTags';
 import {
@@ -49,6 +50,7 @@ import {
   highlightFor,
   JOB_FUNCTIONS,
   logActivateEvent,
+  logAmplifySignal,
   ProfileOption,
   marketsWithRoutes,
   measuredMarketCodes,
@@ -1473,18 +1475,29 @@ function RoutesStep({
   channels: ActivateChannel[];
   headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
+  // The last platform clicked, until the recipient comes back to this tab.
+  // Only time away is kept, never what they did there: we can't see it.
+  const pendingClick = useRef<{ platform: string; at: number; left: boolean } | null>(null);
+
   // Shared by all three channel sections.
   const sectionProps = {
     market,
     highlights,
     role,
     jobFunction,
-    onOpen: (route: ActivateRoute) =>
+    onOpen: (route: ActivateRoute) => {
+      pendingClick.current = { platform: route.platform, at: Date.now(), left: false };
       logActivateEvent(token, sessionId, 'platform_click', {
         marketCode: market,
         entityCompanyId: entityId,
         platform: route.platform,
         tier: route.tier,
+      });
+    },
+    onExpand: (route: ActivateRoute) =>
+      logAmplifySignal(token, sessionId, 'platform_expanded', {
+        marketCode: market,
+        platform: route.platform,
       }),
   };
   const { routes } = resolved;
@@ -1492,6 +1505,53 @@ function RoutesStep({
   const coveragePct = coverage[market] ?? null;
   // No pick means they skipped the question, which shows everything.
   const wants = (c: ActivateChannel) => channels.length === 0 || channels.includes(c);
+
+  // Which platforms this recipient was actually shown, in page order: the
+  // denominator for "shown but skipped". Keyed on the names so a re-render
+  // (new route objects every time) doesn't log it again.
+  const shown = [
+    ...(wants('review') ? routes : []),
+    ...(wants('forum') ? forum.routes : []),
+    ...(wants('social') ? social.routes : []),
+  ]
+    .filter((r) => !r.is_listen_only)
+    .map((r) => r.platform);
+  const shownKey = shown.join('|');
+  useEffect(() => {
+    if (!shownKey) return;
+    logAmplifySignal(token, sessionId, 'routes_shown', {
+      marketCode: market,
+      shownPlatforms: shownKey.split('|'),
+    });
+  }, [token, sessionId, market, shownKey]);
+
+  // Coming back after a click. A return only counts once the page has
+  // actually been left (hidden or blurred), so the click itself can't
+  // register as an instant return.
+  useEffect(() => {
+    const left = () => {
+      if (pendingClick.current) pendingClick.current.left = true;
+    };
+    const back = () => {
+      const p = pendingClick.current;
+      if (!p || !p.left) return;
+      pendingClick.current = null;
+      logAmplifySignal(token, sessionId, 'platform_return', {
+        marketCode: market,
+        platform: p.platform,
+        awaySeconds: (Date.now() - p.at) / 1000,
+      });
+    };
+    const onVisibility = () => (document.visibilityState === 'hidden' ? left() : back());
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('blur', left);
+    window.addEventListener('focus', back);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('blur', left);
+      window.removeEventListener('focus', back);
+    };
+  }, [token, sessionId, market]);
 
   return (
     <>
@@ -1534,6 +1594,7 @@ function RoutesStep({
       )}
 
       <footer className="mt-2 flex flex-col items-center gap-2.5 text-center">
+        <SharePage token={token} sessionId={sessionId} market={market} />
         <p className="act-honesty">We don't see what you write, or whether you write at all.</p>
         <PoweredBy onDark={onColor(org.primary_color) === '#FFFFFF'} />
       </footer>
@@ -1551,6 +1612,7 @@ function ChannelSection({
   role,
   jobFunction,
   onOpen,
+  onExpand,
 }: {
   eyebrow: string;
   routes: ActivateRoute[];
@@ -1561,6 +1623,7 @@ function ChannelSection({
   role: Role;
   jobFunction: string | null;
   onOpen: (route: ActivateRoute) => void;
+  onExpand: (route: ActivateRoute) => void;
 }) {
   if (routes.length === 0) return null;
   // Listen-only sources are counted in the headline percentage but never
@@ -1583,6 +1646,7 @@ function ChannelSection({
             highlight={highlightFor(highlights, market, route.platform, role, jobFunction)}
             localLabel={`${countryName(market)}'s own`}
             onOpen={() => onOpen(route)}
+            onExpand={() => onExpand(route)}
           />
         ))}
       </div>
@@ -1590,10 +1654,53 @@ function ChannelSection({
   );
 }
 
+/**
+ * Passing the page on to a colleague. Shares the bare page address (no query
+ * string), and logs only that a share happened and how, never to whom.
+ */
+function SharePage({
+  token,
+  sessionId,
+  market,
+}: {
+  token: string;
+  sessionId: string;
+  market: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const share = async () => {
+    const url = window.location.origin + window.location.pathname;
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ url, title: document.title });
+        logAmplifySignal(token, sessionId, 'page_shared', { marketCode: market, platform: 'native' });
+      } catch {
+        // Cancelled from the share sheet: nothing was shared.
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2200);
+      logAmplifySignal(token, sessionId, 'page_shared', { marketCode: market, platform: 'copy' });
+    } catch {
+      // Clipboard blocked: nothing to log.
+    }
+  };
+  return (
+    <button type="button" onClick={share} className="act-share">
+      {copied ? <Check size={15} aria-hidden /> : <Share2 size={15} aria-hidden />}
+      {copied ? 'Link copied' : 'Share this page with a colleague'}
+    </button>
+  );
+}
+
 function PlatformCard({
   route,
   role,
   onOpen,
+  onExpand,
   hideRationale = false,
   matched = false,
   highlight,
@@ -1602,6 +1709,8 @@ function PlatformCard({
   route: ActivateRoute;
   role: Role;
   onOpen: () => void;
+  /** Opening (not closing) the how-to: interest short of a click. */
+  onExpand?: () => void;
   hideRationale?: boolean;
   /** e.g. "Romania's own" — every market with a local platform reads well. */
   localLabel?: string;
@@ -1624,7 +1733,10 @@ function PlatformCard({
       data-local={route.is_local || undefined}
     >
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          if (!open) onExpand?.();
+          setOpen(!open);
+        }}
         className="flex w-full items-center text-left"
         style={{ minHeight: 66, padding: '14px 18px', gap: 13 }}
         aria-expanded={open}
@@ -2164,6 +2276,13 @@ const activateCss = `
 
 
 /* Footer */
+.act-share {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 44px;
+  padding: 0 16px; border-radius: 999px; cursor: pointer;
+  background: color-mix(in srgb, var(--activate-on) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--activate-on) 30%, transparent);
+  font-size: 13px; font-weight: 600; color: var(--activate-on);
+}
 .act-honesty {
   font-size: 12.5px; line-height: 1.5; max-width: 300px;
   color: color-mix(in srgb, var(--activate-on) 66%, transparent);

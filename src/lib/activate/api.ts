@@ -685,3 +685,181 @@ export async function getActivateLinkStats(orgId: string): Promise<ActivateLinkS
   if (error) throw error;
   return (data ?? []) as ActivateLinkStats[];
 }
+
+// ---------------------------------------------------------------------------
+// Outcome tracking: page signals + platform-side review counts
+// ---------------------------------------------------------------------------
+//
+// We never learn whether someone wrote anything. These are the honest
+// substitutes: aggregate page signals (what was shown, opened, clicked, how
+// long people were away, whether they shared the page) and the public review
+// total on each destination profile, entered by hand.
+
+export type AmplifySignalType =
+  | 'routes_shown'
+  | 'platform_expanded'
+  | 'platform_return'
+  | 'page_shared';
+
+/**
+ * Fire-and-forget, like logActivateEvent. Separate RPC and table so a missing
+ * migration can only ever lose these signals, never the core funnel.
+ */
+export function logAmplifySignal(
+  token: string,
+  sessionId: string,
+  eventType: AmplifySignalType,
+  fields: {
+    marketCode?: string | null;
+    platform?: string | null;
+    shownPlatforms?: string[] | null;
+    awaySeconds?: number | null;
+  } = {},
+): void {
+  void rpc('amplify_log_event', {
+    p_token: token,
+    p_session_id: sessionId,
+    p_event_type: eventType,
+    p_market_code: fields.marketCode ?? null,
+    p_platform: fields.platform ?? null,
+    p_shown_platforms: fields.shownPlatforms?.length ? fields.shownPlatforms : null,
+    p_away_seconds:
+      fields.awaySeconds == null ? null : Math.max(0, Math.min(86400, Math.round(fields.awaySeconds))),
+  }).then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
+export interface AmplifyFunnel {
+  open: number;
+  market_declared: number;
+  entity_declared: number;
+  profile_declared: number;
+  routes_shown: number;
+  platform_expanded: number;
+  platform_click: number;
+  platform_return: number;
+}
+
+export interface AmplifyPlatformFunnel {
+  shown: number;
+  expanded: number;
+  clicked: number;
+  returned: number;
+}
+
+export interface AmplifyLinkInsights {
+  link_id: string;
+  /** Distinct sessions reaching each step. */
+  funnel: AmplifyFunnel;
+  shares: { sessions: number; native: number; copy: number };
+  /** True below the k-anonymity floor; platforms and away are then null. */
+  suppressed: boolean;
+  platforms: Record<string, AmplifyPlatformFunnel> | null;
+  /** Returns to the page after a click, bucketed by time away. */
+  away: { under_30s: number; '30s_to_2m': number; '2m_to_10m': number; over_10m: number } | null;
+}
+
+export async function getAmplifyLinkInsights(orgId: string): Promise<AmplifyLinkInsights[]> {
+  const { data, error } = await rpc('admin_amplify_link_insights', { p_org_id: orgId });
+  if (error) throw error;
+  return (data ?? []) as AmplifyLinkInsights[];
+}
+
+export interface AmplifyWeeklyClicks {
+  suppressed: boolean;
+  rows: Array<{ week: string; market_code: string | null; platform: string; sessions: number }>;
+}
+
+export async function getAmplifyWeeklyClicks(orgId: string): Promise<AmplifyWeeklyClicks> {
+  const { data, error } = await rpc('admin_amplify_weekly_clicks', { p_org_id: orgId });
+  if (error) throw error;
+  return (data ?? { suppressed: true, rows: [] }) as AmplifyWeeklyClicks;
+}
+
+export interface ReviewSnapshot {
+  id: string;
+  org_id: string;
+  platform: string;
+  market_code: string | null;
+  profile_url: string;
+  review_count: number;
+  rating: number | null;
+  captured_on: string;
+  note: string | null;
+  created_at: string;
+}
+
+export async function listReviewSnapshots(orgId: string): Promise<ReviewSnapshot[]> {
+  const { data, error } = await table('activate_review_snapshots')
+    .select('*')
+    .eq('org_id', orgId)
+    .order('captured_on', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as ReviewSnapshot[];
+}
+
+/** One count per profile per day: saving again on the same day replaces it. */
+export async function saveReviewSnapshot(row: {
+  orgId: string;
+  platform: string;
+  marketCode: string | null;
+  profileUrl: string;
+  reviewCount: number;
+  rating?: number | null;
+  capturedOn: string;
+  note?: string | null;
+}): Promise<void> {
+  const { error } = await table('activate_review_snapshots').upsert(
+    {
+      org_id: row.orgId,
+      platform: row.platform,
+      market_code: row.marketCode,
+      profile_url: row.profileUrl,
+      review_count: row.reviewCount,
+      rating: row.rating ?? null,
+      captured_on: row.capturedOn,
+      note: row.note ?? null,
+    },
+    { onConflict: 'org_id,profile_url,captured_on' },
+  );
+  if (error) throw error;
+}
+
+export async function deleteReviewSnapshot(id: string): Promise<void> {
+  const { error } = await table('activate_review_snapshots').delete().eq('id', id);
+  if (error) throw error;
+}
+
+/**
+ * Reviews per week between the first and last snapshot in a window, or null
+ * with fewer than two snapshots or under a week apart.
+ */
+export function reviewsPerWeek(snaps: Pick<ReviewSnapshot, 'captured_on' | 'review_count'>[]): number | null {
+  if (snaps.length < 2) return null;
+  const sorted = [...snaps].sort((a, b) => a.captured_on.localeCompare(b.captured_on));
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const days = (Date.parse(last.captured_on) - Date.parse(first.captured_on)) / 86_400_000;
+  if (days < 7) return null;
+  return ((last.review_count - first.review_count) / days) * 7;
+}
+
+/**
+ * Review growth before vs after a date (the first link going live). The last
+ * count on or before launch day ends the before window and starts the after
+ * one, so a single count taken at launch anchors both.
+ */
+export function reviewGrowthAround(
+  snaps: Pick<ReviewSnapshot, 'captured_on' | 'review_count'>[],
+  launchDate: string,
+): { before: number | null; after: number | null } {
+  const day = launchDate.slice(0, 10);
+  const sorted = [...snaps].sort((a, b) => a.captured_on.localeCompare(b.captured_on));
+  const before = sorted.filter((s) => s.captured_on <= day);
+  const after = sorted.filter((s) => s.captured_on > day);
+  // The last pre-launch count is the starting point of the after window.
+  if (before.length) after.unshift(before[before.length - 1]);
+  return { before: reviewsPerWeek(before), after: reviewsPerWeek(after) };
+}
