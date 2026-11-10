@@ -1452,7 +1452,6 @@ function RoutesStep({
   social,
   highlights,
   jobFunction,
-  coverage,
   channels,
   headingRef,
 }: {
@@ -1488,36 +1487,26 @@ function RoutesStep({
       }),
   };
   const { routes } = resolved;
-  // Share of this market's answers that come from the platforms listed below.
-  const coveragePct = coverage[market] ?? null;
   // No pick means they skipped the question, which shows everything.
   const wants = (c: ActivateChannel) => channels.length === 0 || channels.includes(c);
 
   return (
     <>
-      {/* A general heading — "what are my options" is the question a
-          recipient actually arrives with. The measurement is evidence for
-          the list, so it sits under it in plain text rather than as a
-          dashboard number. */}
+      {/* Plain words, one short paragraph: why these sites matter, then
+          that sharing is optional. The coverage measurement stays out of the
+          page; it reads as a dashboard figure to an employee. */}
       <div className="act-rise flex flex-col items-center gap-2 text-center">
         <h2 ref={headingRef} tabIndex={-1} className="act-generic-heading outline-none">
           Your options in {countryInSentence(market)}
         </h2>
         <p className="act-intro">
-          {/* "work at" for candidates too: the coverage figure is measured
-              across every question about working here, not interview ones. */}
-          These are the places AI pulls from when someone asks what it's like to work at{' '}
-          {org.display_name} here
-          {coveragePct !== null ? `, in ${coveragePct}% of answers` : ''}.
+          Our employer reputation depends on these sites.{' '}
+          {role === 'candidate'
+            ? 'Share how your interview went on any you’re comfortable with, or none at all.'
+            : 'Share your honest thoughts on any you’re comfortable with, or none at all.'}{' '}
+          Whether you say anything, and what you say, is entirely yours.
         </p>
       </div>
-
-      <p className="act-intro">
-        {role === 'candidate'
-          ? 'Share how your interview went on any of them you’re comfortable with, or none at all.'
-          : 'Share your honest thoughts on any of them you’re comfortable with, or none at all.'}{' '}
-        Whether you say anything, and what you say, is entirely yours.
-      </p>
 
       {wants('review') && (
         <ChannelSection
