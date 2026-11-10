@@ -685,3 +685,83 @@ export async function getActivateLinkStats(orgId: string): Promise<ActivateLinkS
   if (error) throw error;
   return (data ?? []) as ActivateLinkStats[];
 }
+
+// ---------------------------------------------------------------------------
+// Outcome tracking: page signals
+// ---------------------------------------------------------------------------
+//
+// We never learn whether someone wrote anything. This is the honest
+// substitute: aggregate page signals (what was shown, opened, clicked, how
+// long people were away, whether they shared the page).
+
+export type AmplifySignalType =
+  | 'routes_shown'
+  | 'platform_expanded'
+  | 'platform_return'
+  | 'page_shared';
+
+/**
+ * Fire-and-forget, like logActivateEvent. Separate RPC and table so a missing
+ * migration can only ever lose these signals, never the core funnel.
+ */
+export function logAmplifySignal(
+  token: string,
+  sessionId: string,
+  eventType: AmplifySignalType,
+  fields: {
+    marketCode?: string | null;
+    platform?: string | null;
+    shownPlatforms?: string[] | null;
+    awaySeconds?: number | null;
+  } = {},
+): void {
+  void rpc('amplify_log_event', {
+    p_token: token,
+    p_session_id: sessionId,
+    p_event_type: eventType,
+    p_market_code: fields.marketCode ?? null,
+    p_platform: fields.platform ?? null,
+    p_shown_platforms: fields.shownPlatforms?.length ? fields.shownPlatforms : null,
+    p_away_seconds:
+      fields.awaySeconds == null ? null : Math.max(0, Math.min(86400, Math.round(fields.awaySeconds))),
+  }).then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
+export interface AmplifyFunnel {
+  open: number;
+  market_declared: number;
+  entity_declared: number;
+  profile_declared: number;
+  routes_shown: number;
+  platform_expanded: number;
+  platform_click: number;
+  platform_return: number;
+}
+
+export interface AmplifyPlatformFunnel {
+  shown: number;
+  expanded: number;
+  clicked: number;
+  returned: number;
+}
+
+export interface AmplifyLinkInsights {
+  link_id: string;
+  /** Distinct sessions reaching each step. */
+  funnel: AmplifyFunnel;
+  shares: { sessions: number; native: number; copy: number };
+  /** True below the k-anonymity floor; platforms and away are then null. */
+  suppressed: boolean;
+  platforms: Record<string, AmplifyPlatformFunnel> | null;
+  /** Returns to the page after a click, bucketed by time away. */
+  away: { under_30s: number; '30s_to_2m': number; '2m_to_10m': number; over_10m: number } | null;
+}
+
+export async function getAmplifyLinkInsights(orgId: string): Promise<AmplifyLinkInsights[]> {
+  const { data, error } = await rpc('admin_amplify_link_insights', { p_org_id: orgId });
+  if (error) throw error;
+  return (data ?? []) as AmplifyLinkInsights[];
+}

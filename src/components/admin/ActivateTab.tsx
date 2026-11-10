@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { platformName } from '@/pages/Activate';
+import { LinkComparison } from '@/components/admin/AmplifyOutcomes';
 import {
   ActivateAdminRoute,
   ActivateAudience,
@@ -39,11 +40,13 @@ import {
   ActivateBrandingRow,
   ActivateLink,
   ActivateLinkStats,
+  AmplifyLinkInsights,
   activateLinkFor,
   countryName,
   createActivateLink,
   getActivateBranding,
   getActivateLinkStats,
+  getAmplifyLinkInsights,
   listActivateLinks,
   listActivateRoutes,
   saveActivateBranding,
@@ -78,6 +81,9 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
   const [entities, setEntities] = useState<EntityOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  // Outcome tracking loads on its own, so a failure there never blanks the
+  // links and branding above it.
+  const [insights, setInsights] = useState<Record<string, AmplifyLinkInsights>>({});
 
   useEffect(() => {
     if (organizationId) return;
@@ -121,9 +127,20 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
     }
   }, [orgId]);
 
+  const refreshOutcomes = useCallback(async () => {
+    if (!orgId) return;
+    try {
+      const ins = await getAmplifyLinkInsights(orgId);
+      setInsights(Object.fromEntries(ins.map((s) => [s.link_id, s])));
+    } catch {
+      setInsights({});
+    }
+  }, [orgId]);
+
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    refreshOutcomes();
+  }, [refresh, refreshOutcomes]);
 
   const entityName = useMemo(
     () => Object.fromEntries(entities.map((e) => [e.id, e.name])),
@@ -232,6 +249,9 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
               privacy.
             </p>
           </div>
+
+          {/* What happened after people opened a link */}
+          <LinkComparison links={links} insights={insights} />
 
           {/* Routes overview */}
           <RoutesOverview routes={routes} entityName={entityName} />
