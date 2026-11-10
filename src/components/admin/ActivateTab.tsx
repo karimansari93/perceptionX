@@ -32,7 +32,7 @@ import {
 } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { platformName } from '@/pages/Activate';
-import { LinkComparison, ReviewTracker } from '@/components/admin/AmplifyOutcomes';
+import { LinkComparison } from '@/components/admin/AmplifyOutcomes';
 import {
   ActivateAdminRoute,
   ActivateAudience,
@@ -41,17 +41,13 @@ import {
   ActivateLink,
   ActivateLinkStats,
   AmplifyLinkInsights,
-  AmplifyWeeklyClicks,
   activateLinkFor,
   countryName,
   createActivateLink,
   getActivateBranding,
   getActivateLinkStats,
   getAmplifyLinkInsights,
-  getAmplifyWeeklyClicks,
   listActivateLinks,
-  listReviewSnapshots,
-  ReviewSnapshot,
   listActivateRoutes,
   saveActivateBranding,
   setActivateLinkEnabled,
@@ -88,8 +84,6 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
   // Outcome tracking loads on its own, so a failure there never blanks the
   // links and branding above it.
   const [insights, setInsights] = useState<Record<string, AmplifyLinkInsights>>({});
-  const [snapshots, setSnapshots] = useState<ReviewSnapshot[]>([]);
-  const [weekly, setWeekly] = useState<AmplifyWeeklyClicks | null>(null);
 
   useEffect(() => {
     if (organizationId) return;
@@ -135,16 +129,12 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
 
   const refreshOutcomes = useCallback(async () => {
     if (!orgId) return;
-    const [ins, snaps, wk] = await Promise.allSettled([
-      getAmplifyLinkInsights(orgId),
-      listReviewSnapshots(orgId),
-      getAmplifyWeeklyClicks(orgId),
-    ]);
-    setInsights(
-      ins.status === 'fulfilled' ? Object.fromEntries(ins.value.map((s) => [s.link_id, s])) : {},
-    );
-    setSnapshots(snaps.status === 'fulfilled' ? snaps.value : []);
-    setWeekly(wk.status === 'fulfilled' ? wk.value : null);
+    try {
+      const ins = await getAmplifyLinkInsights(orgId);
+      setInsights(Object.fromEntries(ins.map((s) => [s.link_id, s])));
+    } catch {
+      setInsights({});
+    }
   }, [orgId]);
 
   useEffect(() => {
@@ -262,14 +252,6 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
 
           {/* What happened after people opened a link */}
           <LinkComparison links={links} insights={insights} />
-          <ReviewTracker
-            orgId={orgId}
-            routes={routes}
-            links={links}
-            snapshots={snapshots}
-            weekly={weekly}
-            onSaved={refreshOutcomes}
-          />
 
           {/* Routes overview */}
           <RoutesOverview routes={routes} entityName={entityName} />

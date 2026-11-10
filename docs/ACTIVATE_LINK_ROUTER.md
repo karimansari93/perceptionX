@@ -382,8 +382,7 @@ against their composition shares (Company Culture 19.2%, Leadership 16.4%, Job
 Security 13.9%, Wellbeing & Balance 12.2%, Career Opportunities 12.0%), kununu
 surfacing rate in DE/CH, and Relevance per affected market.
 
-**Add a platform-side denominator:** at launch, snapshot the review count on
-each destination profile (manual count, see Outcome tracking below). Cohort claims
+**Platform-side review counts are not collected** (see Outcome tracking below). Cohort claims
 then rest on platform-side volume + our citation and sentiment data, not
 citations alone.
 
@@ -412,15 +411,15 @@ record of what anyone did. The honesty line stays true.
 `admin_amplify_link_insights` gives the step-by-step funnel, per-platform shown
 → opened → clicked → returned, time-away buckets and shares per link, with the
 same k-floor: below 5 sessions that picked a country, only the funnel totals
-come back. `admin_amplify_weekly_clicks` gives weekly click-through sessions per
-market × platform for the org, withheld entirely below the floor.
+come back.
 
-**Review counts** live in `activate_review_snapshots`: one row per destination
-profile per day, entered by hand in the admin screen (total reviews, optional
-rating). Growth is reviews per week before the first link vs since, using the
-last pre-launch count as the start of the after window. Enter counts by hand:
-Glassdoor and Indeed forbid automated collection. To a client, quote the change
-in pace as a percentage, with Karim's sign-off.
+**No hand-entered review counts.** A manual review-count tracker was built
+and removed the same day (Karim, 2026-11-10: no manual steps in admin).
+Glassdoor and Indeed forbid automated collection, so platform-side counts
+are out unless a licensed data source is bought. Outcome claims rest on the
+page signals above plus our own collections: experience-prompt sentiment and
+how often AI cites each destination platform, per market, before vs after a
+link went out.
 
 ## Hard constraints
 
