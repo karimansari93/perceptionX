@@ -904,7 +904,7 @@ export const VisibilityRankingsTab = () => {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Day of Month</Label>
                 <Select
@@ -988,7 +988,7 @@ export const VisibilityRankingsTab = () => {
         {/* Left Column: Configuration */}
         <div className="space-y-6">
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
               <div>
                 <CardTitle>Configuration</CardTitle>
                 <CardDescription>
@@ -1347,7 +1347,7 @@ export const VisibilityRankingsTab = () => {
 
       {/* Recent Results Table */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle className="flex items-center gap-2">
               <Database className="h-5 w-5 text-teal" />

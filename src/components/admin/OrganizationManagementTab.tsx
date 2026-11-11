@@ -784,7 +784,7 @@ export const OrganizationManagementTab = () => {
           <div className="space-y-5">
             {/* Upload form */}
             <div className="space-y-3 rounded-md border border-slate-200 p-3">
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium text-slate-600">Year *</Label>
                   <Select value={String(reportYear)} onValueChange={(v) => setReportYear(Number(v))}>
@@ -1233,12 +1233,12 @@ export const OrganizationManagementTab = () => {
       ) : (
       <>
       {/* Header - compact */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-headline font-semibold text-slate-800">Organizations</h1>
           <p className="text-sm text-slate-500 mt-0.5">Manage your organizations and their members</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button onClick={loadData} variant="outline" size="sm" className="border-slate-200 text-slate-600">
             <RefreshCw className="h-4 w-4 mr-1.5" />
             Refresh
