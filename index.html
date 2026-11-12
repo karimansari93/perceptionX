@@ -72,22 +72,33 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Geologica:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <!-- Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-FGRDCN2WF3"></script>
+    <!-- Google tag (gtag.js). Not loaded on Amplify pages: a client share host
+         (csl.perceptionx.ai, mirrors src/lib/activate/host.ts) or /amplify/,
+         /activate/ paths. Recipients are a client's employees, and the page
+         promises them no tracking beyond anonymous, aggregate counts. -->
     <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
+      (function () {
+        var h = location.hostname.toLowerCase();
+        var sub = /\.perceptionx\.ai$/.test(h) ? h.replace(/\.perceptionx\.ai$/, '') : null;
+        var reserved = ['app', 'www', 'api', 'admin', 'mail', 'staging'];
+        var shareHost = sub !== null && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(sub) && reserved.indexOf(sub) === -1;
+        if (shareHost || /^\/(amplify|activate)\//.test(location.pathname)) return;
 
-      gtag('config', 'G-FGRDCN2WF3');
-      
-      // Google Ads conversion tracking
-      gtag('event', 'ads_conversion_PAGE_VIEW_1', {
-        // Event parameters for initial page load
-        page_title: document.title,
-        page_location: window.location.href,
-        page_path: window.location.pathname,
-      });
+        var s = document.createElement('script');
+        s.async = true;
+        s.src = 'https://www.googletagmanager.com/gtag/js?id=G-FGRDCN2WF3';
+        document.head.appendChild(s);
+        window.dataLayer = window.dataLayer || [];
+        window.gtag = function () { window.dataLayer.push(arguments); };
+        gtag('js', new Date());
+        gtag('config', 'G-FGRDCN2WF3');
+        // Google Ads conversion tracking
+        gtag('event', 'ads_conversion_PAGE_VIEW_1', {
+          page_title: document.title,
+          page_location: window.location.href,
+          page_path: window.location.pathname,
+        });
+      })();
     </script>
 
     <!-- Hotjar is initialized via @hotjar/browser SDK in App.tsx -->

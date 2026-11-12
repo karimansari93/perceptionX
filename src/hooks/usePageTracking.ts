@@ -8,10 +8,11 @@ declare global {
   }
 }
 
-export const usePageTracking = () => {
+export const usePageTracking = (enabled = true) => {
   const location = useLocation();
 
   useEffect(() => {
+    if (!enabled) return;
     // Track page view for Google Analytics
     if (window.gtag) {
       window.gtag('config', 'G-FGRDCN2WF3', {
