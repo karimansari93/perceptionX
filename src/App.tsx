@@ -191,6 +191,9 @@ const ErrorFallback = ({ error, resetErrorBoundary }: { error: Error; resetError
 // Hotjar Initialization Component - Only load in production
 const HotjarInitializer = () => {
   useEffect(() => {
+    // Never on Amplify pages: recipients are a client's employees, and the
+    // page promises them no tracking beyond anonymous, aggregate counts.
+    if (AMPLIFY_ENTRY) return;
     // Only initialize Hotjar in production environments
     if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
       const siteId = 6599957;
@@ -209,7 +212,7 @@ const HotjarInitializer = () => {
 
 // Page Tracking Component
 const PageTracker = () => {
-  usePageTracking();
+  usePageTracking(!AMPLIFY_ENTRY);
   return null;
 };
 
