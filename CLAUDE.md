@@ -64,6 +64,11 @@
 
 - Supabase is read-only unless Karim asks for a change in the current
   conversation. Back up rows before replacing them, and verify afterwards.
+- Every backup or scratch table must be locked in the same statement that
+  creates it: `alter table ... enable row level security` and
+  `revoke all on ... from anon, authenticated`. On 2026-10-25 Supabase flagged
+  13 unlocked backups, including client prompts and answers, as readable and
+  deletable by anyone with the public key.
 - The Supabase MCP holds DROP and DELETE statements for a confirmation that
   does not reach cloud sessions, so they time out. Put deletes in edge
   function code or a committed migration instead of retrying them.
