@@ -5,6 +5,10 @@
 //   * RFC 7591 dynamic client registration
 //   * authorization-code + PKCE (S256, mandatory), refresh rotation
 //   * RFC 7009 revocation
+//   * confidential clients minted by an admin (mcp_create_confidential_client)
+//     for hosts that cannot self-register, e.g. Gemini Enterprise. These
+//     authenticate at /token with a client secret, are bound to ONE
+//     organization, and may skip PKCE; public clients never may.
 // The /authorize step never renders a login UI of its own: it parks the
 // request in mcp_oauth_requests and bounces to the app's consent page, where
 // the user is already authenticated with Supabase. The consent page calls
@@ -41,7 +45,7 @@ export function authorizationServerMetadata(cfg: OAuthConfig): Response {
     response_types_supported: ['code'],
     response_modes_supported: ['query'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
-    token_endpoint_auth_methods_supported: ['none'],
+    token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
     code_challenge_methods_supported: ['S256'],
     // Clients may present an https client-metadata URL as their client_id
     // (CIMD) instead of registering — Claude's "hosted client metadata".
@@ -105,18 +109,29 @@ function isBlockedCimdHost(hostname: string): boolean {
     /^172\.(1[6-9]|2\d|3[01])\./.test(h) || h === '::1';
 }
 
-async function resolveClient(
-  admin: any,
-  clientId: string
-): Promise<{ client_id: string; client_name: string | null; redirect_uris: string[] } | null> {
+interface ResolvedClient {
+  client_id: string;
+  client_name: string | null;
+  redirect_uris: string[];
+  // Confidential clients only: sha256 hex of the secret, and the one
+  // organization the client may connect.
+  client_secret_hash?: string | null;
+  organization_id?: string | null;
+}
+
+async function resolveClient(admin: any, clientId: string): Promise<ResolvedClient | null> {
+  if (!clientId) return null;
   const { data: row } = await admin
-    .from('mcp_oauth_clients').select('client_id, client_name, redirect_uris')
+    .from('mcp_oauth_clients')
+    .select('client_id, client_name, redirect_uris, client_secret_hash, organization_id')
     .eq('client_id', clientId).maybeSingle();
   if (row) {
     return {
       client_id: row.client_id,
       client_name: row.client_name,
       redirect_uris: Array.isArray(row.redirect_uris) ? row.redirect_uris : [],
+      client_secret_hash: row.client_secret_hash ?? null,
+      organization_id: row.organization_id ?? null,
     };
   }
 
@@ -210,7 +225,11 @@ export async function handleAuthorize(req: Request, admin: any, cfg: OAuthConfig
   };
 
   if (responseType !== 'code') return redirectWithError('unsupported_response_type', 'Only response_type=code is supported.');
-  if (!codeChallenge || codeChallengeMethod !== 'S256') {
+  // PKCE: mandatory for public clients. A confidential client (it proves
+  // itself with a secret at /token) may omit it, but if it sends a
+  // challenge, the challenge must be S256 and is verified at /token.
+  const confidential = !!client.client_secret_hash;
+  if (codeChallenge ? codeChallengeMethod !== 'S256' : !confidential) {
     return redirectWithError('invalid_request', 'PKCE with code_challenge_method=S256 is required.');
   }
 
@@ -219,7 +238,7 @@ export async function handleAuthorize(req: Request, admin: any, cfg: OAuthConfig
     redirect_uri: redirectUri,
     scope,
     state: state || null,
-    code_challenge: codeChallenge,
+    code_challenge: codeChallenge || null,
     code_challenge_method: 'S256',
     resource: resource || null,
   }).select('id').single();
@@ -264,7 +283,7 @@ export async function handleAuthorizeInfo(req: Request, admin: any): Promise<Res
   }
 
   const { data: client } = await admin
-    .from('mcp_oauth_clients').select('client_name')
+    .from('mcp_oauth_clients').select('client_name, organization_id')
     .eq('client_id', request.client_id).maybeSingle();
 
   let organizations: { id: string; name: string }[];
@@ -294,6 +313,10 @@ export async function handleAuthorizeInfo(req: Request, admin: any): Promise<Res
     organizations = (memberships || [])
       .filter((m: any) => enabled.has(m.organization_id))
       .map((m: any) => ({ id: m.organization_id, name: m.organizations?.name || 'Organization' }));
+  }
+  // A client issued to one organization offers only that organization.
+  if (client?.organization_id) {
+    organizations = organizations.filter((o) => o.id === client.organization_id);
   }
 
   return json({
@@ -335,6 +358,12 @@ export async function handleAuthorizeApprove(req: Request, admin: any): Promise<
   ]);
   if (!membership && !isAdmin) return json({ error: 'You are not a member of this organization.' }, 403);
   if (!settings?.enabled) return json({ error: 'MCP access is not enabled for this organization.' }, 403);
+  const { data: boundClient } = await admin
+    .from('mcp_oauth_clients').select('organization_id')
+    .eq('client_id', request.client_id).maybeSingle();
+  if (boundClient?.organization_id && boundClient.organization_id !== organizationId) {
+    return json({ error: 'This connection was set up for a different organization.' }, 403);
+  }
 
   const rawCode = randomToken('pxac_', 32);
   const codeHash = await sha256Hex(rawCode);
@@ -358,10 +387,51 @@ export async function handleAuthorizeApprove(req: Request, admin: any): Promise<
   return json({ redirect_to: to.toString() });
 }
 
+// ── Client authentication at /token ─────────────────────────────────────────
+// client_secret_basic (RFC 6749 §2.3.1: form-urlencoded id:secret in a Basic
+// header) or client_secret_post (client_id + client_secret in the body).
+export function presentedClientCredentials(
+  req: Request,
+  body: Record<string, any>
+): { clientId: string; clientSecret: string } {
+  const auth = req.headers.get('authorization') || '';
+  const m = auth.match(/^Basic\s+(.+)$/i);
+  if (m) {
+    try {
+      const decoded = atob(m[1].trim());
+      const i = decoded.indexOf(':');
+      if (i > 0) {
+        const dec = (v: string) => decodeURIComponent(v.replace(/\+/g, ' '));
+        return { clientId: dec(decoded.slice(0, i)), clientSecret: dec(decoded.slice(i + 1)) };
+      }
+    } catch { /* fall through to the body */ }
+  }
+  return { clientId: String(body.client_id || ''), clientSecret: String(body.client_secret || '') };
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+// Confidential client: the presented secret must match. Public client: a
+// presented secret is an error (it was never issued one).
+export async function clientSecretOk(
+  storedHash: string | null | undefined,
+  presentedSecret: string
+): Promise<boolean> {
+  if (!storedHash) return !presentedSecret;
+  if (!presentedSecret) return false;
+  return constantTimeEqual(await sha256Hex(presentedSecret), storedHash);
+}
+
 // ── POST /token: code exchange + refresh rotation ───────────────────────────
 export async function handleToken(req: Request, admin: any): Promise<Response> {
   const body = await parseBody(req);
   const grantType = String(body.grant_type || '');
+  const creds = presentedClientCredentials(req, body);
 
   // Opportunistic cleanup of expired short-lived rows (bounded, cheap).
   const dayAgo = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
@@ -371,9 +441,9 @@ export async function handleToken(req: Request, admin: any): Promise<Response> {
   if (grantType === 'authorization_code') {
     const code = String(body.code || '');
     const codeVerifier = String(body.code_verifier || '');
-    const clientId = String(body.client_id || '');
+    const clientId = creds.clientId;
     const redirectUri = String(body.redirect_uri || '');
-    if (!code || !codeVerifier) return oauthError('invalid_request', 'code and code_verifier are required.');
+    if (!code) return oauthError('invalid_request', 'code is required.');
 
     const codeHash = await sha256Hex(code);
     const { data: stored } = await admin
@@ -389,8 +459,18 @@ export async function handleToken(req: Request, admin: any): Promise<Response> {
     if (clientId && stored.client_id !== clientId) return oauthError('invalid_grant', 'client_id mismatch.');
     if (redirectUri && stored.redirect_uri !== redirectUri) return oauthError('invalid_grant', 'redirect_uri mismatch.');
 
-    const challenge = await sha256Base64Url(codeVerifier);
-    if (challenge !== stored.code_challenge) return oauthError('invalid_grant', 'PKCE verification failed.');
+    const client = await resolveClient(admin, stored.client_id);
+    if (!client || !(await clientSecretOk(client.client_secret_hash, creds.clientSecret))) {
+      return oauthError('invalid_client', 'Client authentication failed.', 401);
+    }
+    // A code issued with a challenge always needs the verifier. A code
+    // without one exists only for confidential clients (see /authorize),
+    // which just authenticated with their secret.
+    if (stored.code_challenge || !client.client_secret_hash) {
+      if (!codeVerifier) return oauthError('invalid_request', 'code_verifier is required.');
+      const challenge = await sha256Base64Url(codeVerifier);
+      if (challenge !== stored.code_challenge) return oauthError('invalid_grant', 'PKCE verification failed.');
+    }
 
     await admin.from('mcp_auth_codes').update({ used_at: new Date().toISOString() }).eq('code_hash', codeHash);
     return await issueTokenPair(admin, stored.organization_id, stored.user_id, stored.client_id, stored.scope, null);
@@ -412,6 +492,16 @@ export async function handleToken(req: Request, admin: any): Promise<Response> {
     }
     if (stored.expires_at && new Date(stored.expires_at) < new Date()) {
       return oauthError('invalid_grant', 'Refresh token expired. Re-authorize.');
+    }
+    // A confidential client's refresh token is useless without its secret.
+    const client = stored.client_id ? await resolveClient(admin, stored.client_id) : null;
+    if (client?.client_secret_hash) {
+      if (creds.clientId && creds.clientId !== client.client_id) {
+        return oauthError('invalid_client', 'Client authentication failed.', 401);
+      }
+      if (!(await clientSecretOk(client.client_secret_hash, creds.clientSecret))) {
+        return oauthError('invalid_client', 'Client authentication failed.', 401);
+      }
     }
     await admin.from('mcp_tokens').update({ revoked_at: new Date().toISOString() }).eq('id', stored.id);
     return await issueTokenPair(admin, stored.organization_id, stored.user_id, stored.client_id, stored.scope, stored.id);
