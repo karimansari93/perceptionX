@@ -55,18 +55,18 @@ export const OrgWorkspace = ({ org, logoSrc, onBack, reportsPanel, membersPanel 
         </Button>
 
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <OrgLogo name={org.name} src={logoSrc} size="lg" />
             <div>
-              <h1 className="text-2xl font-headline font-bold text-slate-900">{org.name}</h1>
+              <h1 className="text-xl md:text-2xl font-headline font-bold text-slate-900 break-words">{org.name}</h1>
               {org.description && <p className="text-sm text-slate-500 mt-0.5">{org.description}</p>}
             </div>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Tabs value={section} onValueChange={setSection}>
-            <TabsList>
+          <Tabs value={section} onValueChange={setSection} className="max-w-full overflow-x-auto">
+            <TabsList className="w-max">
               {SECTIONS.map((s) => (
                 <TabsTrigger key={s.id} value={s.id}>
                   {s.label}

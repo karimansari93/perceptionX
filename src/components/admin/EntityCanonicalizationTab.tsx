@@ -800,7 +800,7 @@ export const EntityCanonicalizationTab = () => {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between space-y-0">
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
           <div>
             <CardTitle>Data Cleanup</CardTitle>
             <CardDescription>
@@ -890,7 +890,7 @@ export const EntityCanonicalizationTab = () => {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
             <Button
               variant={section === "pending" ? "default" : "outline"}
               size="sm"
@@ -919,13 +919,13 @@ export const EntityCanonicalizationTab = () => {
             >
               Aliases ({aliases.length})
             </Button>
-            <div className="ml-auto relative">
+            <div className="w-full sm:w-auto sm:ml-auto relative">
               <Search className="h-4 w-4 absolute left-2 top-2.5 text-slate-400" />
               <Input
                 placeholder="Search..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-8 w-64"
+                className="pl-8 w-full sm:w-64"
               />
             </div>
           </div>
@@ -1317,7 +1317,7 @@ const PendingTable = ({
           <span className="text-sm text-slate-500 ml-2">{selectedCount} selected</span>
         )}
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="sm:ml-auto flex flex-wrap items-center gap-2">
           <Select
             value={overrideType || "__use_llm__"}
             onValueChange={(v) => {
