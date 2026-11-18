@@ -108,6 +108,16 @@ Settings → Connectors → Advanced → Developer Mode → *Add custom connecto
 **Claude (claude.ai)**  
 Settings → Connectors → *Add custom connector* → same URL, same OAuth flow.
 
+**Gemini Enterprise (admin-configured, confidential client)**  
+Google's *Custom MCP Server* data store (preview) does no dynamic registration and no OAuth discovery, so we mint a confidential client per customer, bound to that customer's organization:
+```sql
+select * from mcp_create_confidential_client(
+  'Gemini Enterprise (<customer>)',
+  '["<redirect URI shown on Google''s setup page>"]'::jsonb,
+  '<organization uuid>');   -- returns client_id + client_secret, the secret ONCE
+```
+Send the secret to the customer's Google admin by a private channel (never in an artifact, ticket or Slack thread). They enter, in Google Cloud console → Gemini Enterprise → Data stores → *Custom MCP Server*: server URL `https://app.perceptionx.ai/mcp`, authorization URL `https://app.perceptionx.ai/mcp/authorize`, token URL `https://app.perceptionx.ai/mcp/token`, the client ID and secret, scope `perceptionx:read`. Then they enable the tools and attach the data store to their Gemini Enterprise app; each user signs in with their own PerceptionX login on first use. A confidential client authenticates at `/token` with `client_secret_post` or `client_secret_basic`, may omit PKCE (a challenge, if sent, is still verified), must present the secret on refresh too, and can only ever connect its bound organization (consent lists only that org; approve refuses others). Public clients (ChatGPT, Claude, DCR, CIMD) are unchanged: PKCE stays mandatory. Tests: `cd supabase/functions && deno test mcp-server/`. To cut a customer off: `mcp_disable_org`, or revoke their tokens.
+
 **Claude Code / scripts (PAT)**
 ```bash
 claude mcp add --transport http perceptionx https://app.perceptionx.ai/mcp \

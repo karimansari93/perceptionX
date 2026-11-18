@@ -90,7 +90,9 @@ To use it in a chat: open the tools menu at the bottom of the message box and ma
 
 ## Other assistants
 
-Gemini and Microsoft Copilot don't yet let individual users add a custom connector. If your company runs an enterprise version that supports custom MCP connectors, your IT team can add PerceptionX with the same address. Get in touch and we'll walk them through it.
+**Gemini.** PerceptionX works with Gemini Enterprise, Google's business edition of Gemini. Individual users can't add it themselves: your Google admin sets it up once, using sign-in details we issue for your organisation. Get in touch and we'll send them, then walk your IT team through the setup.
+
+**Microsoft Copilot** doesn't yet let individual users add a custom connector. If your company runs a version that supports custom MCP connectors, your IT team can add PerceptionX with the same address. Get in touch and we'll walk them through it.
 
 ---
 
