@@ -19,7 +19,6 @@ Status: proposal. Nothing applied, nothing run. Scope for the first test: United
 Consequences:
 - July is out of scope for this test (Karim, 2026-11-19), so no trend and no re-theming of Netflix July. The July rows above are kept for reference only.
 - **The market x function grid is one row in a US-only test.** For the samples it becomes a function strip: Ford 11 cells, Netflix 3.
-- AI Overviews in Ford July returned about half as many answers as the other assistants (432 vs about 815). Per-assistant July figures for AI Overviews use returned overviews as the denominator, as usual.
 
 ## 2. Definitions
 
