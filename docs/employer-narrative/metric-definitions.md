@@ -1,6 +1,6 @@
 # Employer Narrative: metric definitions (proposed, for Karim)
 
-Status: proposal. Nothing applied, nothing run. Scope for the first test: United States only, Ford (Ford + Ford Credit) and Netflix, **October 2026 collection only** (Karim, 2026-11-19). No July data, so the samples show no trend arrow; the header shows the October figure alone.
+Status: tables applied 2026-11-19 (Karim approved in-session; `supabase/migrations/20261119090000_employer_narrative_claims.sql`). Matching job approved at about $0.60, not yet run (waiting on claims). Aligned threshold still to confirm. Scope for the first test: United States only, Ford (Ford + Ford Credit) and Netflix, **October 2026 collection only** (Karim, 2026-11-19). No July data, so the samples show no trend arrow; the header shows the October figure alone.
 
 ## 1. What the US test has to work with (verified 2026-11-19)
 

@@ -1,5 +1,5 @@
--- PROPOSED, NOT APPLIED. Employer Narrative: claims and claim matches.
--- Needs Karim's go-ahead in-session before it moves to supabase/migrations/.
+-- Employer Narrative: claims and claim matches.
+-- Approved by Karim in-session, 2026-11-19.
 --
 -- Scope of the first test (Karim, 2026-11-19): United States only, Ford and
 -- Netflix. Nothing in the schema limits it to the US; the scope lives in the
