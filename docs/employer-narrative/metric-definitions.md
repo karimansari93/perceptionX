@@ -1,6 +1,6 @@
 # Employer Narrative: metric definitions (proposed, for Karim)
 
-Status: proposal. Nothing applied, nothing run. Scope for the first test: United States only, Ford (Ford + Ford Credit) and Netflix.
+Status: proposal. Nothing applied, nothing run. Scope for the first test: United States only, Ford (Ford + Ford Credit) and Netflix, **October 2026 collection only** (Karim, 2026-11-19). No July data, so the samples show no trend arrow; the header shows the October figure alone.
 
 ## 1. What the US test has to work with (verified 2026-11-19)
 
@@ -17,7 +17,7 @@ Status: proposal. Nothing applied, nothing run. Scope for the first test: United
 | Rival themes stored, July | yes | almost none |
 
 Consequences:
-- **Ford can show a trend (July to October). Netflix cannot** without re-theming its July US answers (1,009 answers, about $3 at the usual $0.003 per answer, needs Karim's approval as it is over 1,000).
+- July is out of scope for this test (Karim, 2026-11-19), so no trend and no re-theming of Netflix July. The July rows above are kept for reference only.
 - **The market x function grid is one row in a US-only test.** For the samples it becomes a function strip: Ford 11 cells, Netflix 3.
 - AI Overviews in Ford July returned about half as many answers as the other assistants (432 vs about 815). Per-assistant July figures for AI Overviews use returned overviews as the denominator, as usual.
 
@@ -85,8 +85,7 @@ Matching job, Claude Haiku 5.5 via Message Batches (half price: $0.05 / $0.25 pe
 | Run | Answers (upper bound) | Answer text | Estimated cost |
 |---|---|---|---|
 | October, both clients | 4,281 | about 11.2M characters | about $0.60 |
-| July + October, both clients | 8,167 | about 22.4M characters | about $1.20 |
 
 Assumptions: about 4 characters per token, about 1,000 tokens of instructions and claims per request, about 250 output tokens. Only relevant answers are sent, so the real count is lower. I'll re-quote once the claims are loaded and stop if the per-request size grows past this. The job is over 1,000 answers, so it needs Karim's approval.
 
-Load: reads only US answers in two date windows. It writes only to the two new tables, which have no triggers and feed no materialized views. Run in Dubai working hours with a time limit per step.
+Load: reads only US answers in the October window. It writes only to the two new tables, which have no triggers and feed no materialized views. Run in Dubai working hours with a time limit per step.
