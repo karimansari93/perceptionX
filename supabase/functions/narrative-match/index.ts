@@ -13,7 +13,7 @@ import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.65.0";
 // Service-role callers only: every call can spend money.
 
 const MODEL = "claude-haiku-5-5";
-const MATCHER_VERSION = "narrative-v1-2026-11";
+const MATCHER_VERSION = "narrative-v2-2026-11";
 const CLASSIFIER_VERSION = "v2-2026-10-06";
 
 // @ts-ignore Deno.env is available in edge runtime
@@ -24,16 +24,19 @@ const anthropic = () => new Anthropic({ apiKey: env("CLAUDE_API_KEY") });
 const SYSTEM = `You compare what an employer says about itself with what an AI assistant told a job candidate.
 
 You get a list of the employer's claims, each with a label, and one AI answer. For EVERY claim, decide one verdict:
-- "echoes": the answer states the claim or a clear equivalent about this employer.
-- "contradicts": the answer says the opposite, as an opinion or framing (e.g. claim "collaborative culture", answer "siloed and political").
-- "inaccurate": the answer states a specific fact about this employer (a policy, number, benefit, event or date) that conflicts with the claim, such as an old policy or a benefit described wrongly.
-- "silent": the answer does not address this claim.
+- "echoes": the answer conveys the claim's specific point about this employer. A clear paraphrase counts; a generic mention of the topic does not.
+- "contradicts": the answer asserts the opposite of the claim, as an opinion or framing (claim "collaborative culture", answer "siloed and political"; claim "smooth interviews", answer "candidates find the process stressful and get no feedback").
+- "inaccurate": the answer asserts a specific fact about this employer (a policy, number, benefit, event or date) that cannot be true if the claim is true (claim "no bonuses", answer "Netflix pays an annual bonus").
+- "silent": everything else, including answers that touch the topic without making the claim's point.
 
-Rules:
-- Judge only what the answer says about the named employer, not other companies.
-- Mentioning the general topic is not enough to echo: the answer must convey the claim's substance.
-- For any verdict except "silent", "quote" must be copied exactly, word for word, from the answer (one sentence or less). For "silent", quote is "".
-- "reason" is one short line.
+Decision rules, in order:
+1. Leaving something out is never "contradicts" or "inaccurate". If the answer omits part of the claim, or does not mention a detail (a date, "day one", a number, a word like "no bonuses"), the verdict is "silent" or, if the specific point is still conveyed, "echoes".
+2. "contradicts" and "inaccurate" need a statement that conflicts with the claim. Ask: could both the claim and the answer's sentence be true at once? If yes, it is not a contradiction.
+3. Generic wording is not an echo. "Robust healthcare" does not echo "medical, dental and vision coverage from day one"; "good benefits" does not echo "vehicle discounts". The answer must name the specific thing.
+4. Judge only what the answer says about the named employer, not other companies.
+5. For every claim, use the claim's label exactly as given (for example "c_1a2b3c4d").
+6. For any verdict except "silent", "quote" is copied word for word from the answer (one sentence or less). For "silent", quote is "".
+7. "reason" is one short line.
 Return only JSON: {"results":[{"claim":"<label>","verdict":"...","quote":"...","reason":"..."}]}`;
 
 type Claim = { id: string; company_id: string; organization_id: string; claim_text: string; attribute_id: string };
