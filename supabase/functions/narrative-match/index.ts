@@ -59,7 +59,7 @@ serve(async (req) => {
 async function loadClaims(companyIds: string[]): Promise<Claim[]> {
   const { data, error } = await supabase.from("narrative_claims")
     .select("id, company_id, organization_id, claim_text, attribute_id")
-    .in("company_id", companyIds).eq("is_active", true);
+    .in("company_id", companyIds).eq("is_active", true).limit(1000);
   if (error) throw error;
   return data as Claim[];
 }
@@ -70,10 +70,16 @@ async function submit(p: any) {
   const { company_ids, location_contexts, start, end } = p;
   const claims = await loadClaims(company_ids);
 
-  const { data: prompts, error: pe } = await supabase.from("confirmed_prompts")
-    .select("id").in("company_id", company_ids).in("location_context", location_contexts);
-  if (pe) throw pe;
-  const promptIds = prompts!.map((x: any) => x.id);
+  // PostgREST caps every read at 1,000 rows: page everything.
+  const promptIds: string[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from("confirmed_prompts")
+      .select("id").in("company_id", company_ids).in("location_context", location_contexts)
+      .order("id").range(from, from + 999);
+    if (error) throw error;
+    promptIds.push(...data!.map((x: any) => x.id));
+    if (data!.length < 1000) break;
+  }
 
   const answers: any[] = [];
   for (let i = 0; i < promptIds.length; i += 100) {
@@ -90,15 +96,19 @@ async function submit(p: any) {
   }
 
   const themes = new Map<string, Set<string>>();
-  for (let i = 0; i < answers.length; i += 150) {
-    const { data, error } = await supabase.from("ai_themes")
-      .select("response_id, attribute_id")
-      .in("response_id", answers.slice(i, i + 150).map((a) => a.id))
-      .eq("classifier_version", CLASSIFIER_VERSION);
-    if (error) throw error;
-    for (const t of data!) {
-      if (!themes.has(t.response_id)) themes.set(t.response_id, new Set());
-      themes.get(t.response_id)!.add(t.attribute_id);
+  for (let i = 0; i < answers.length; i += 100) {
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from("ai_themes")
+        .select("response_id, attribute_id")
+        .in("response_id", answers.slice(i, i + 100).map((a) => a.id))
+        .eq("classifier_version", CLASSIFIER_VERSION)
+        .order("id").range(from, from + 999);
+      if (error) throw error;
+      for (const t of data!) {
+        if (!themes.has(t.response_id)) themes.set(t.response_id, new Set());
+        themes.get(t.response_id)!.add(t.attribute_id);
+      }
+      if (data!.length < 1000) break;
     }
   }
 
