@@ -162,10 +162,16 @@ async function collect(batchId: string) {
     for (const a of data!) answerText.set(a.id, { company_id: a.company_id, text: a.response_text ?? "" });
   }
   const companyIds = [...new Set([...answerText.values()].map((a) => a.company_id))];
-  for (const c of await loadClaims(companyIds)) allClaims.set(c.company_id + "|" + label(c), c);
+  // Index by label and by wording: the model often returns the claim's text.
+  const byText = new Map<string, Claim>();
+  for (const c of await loadClaims(companyIds)) {
+    allClaims.set(c.company_id + "|" + label(c), c);
+    byText.set(c.company_id + "|" + norm(c.claim_text), c);
+  }
 
   const rows: any[] = [];
-  let parseFail = 0, notVerbatim = 0, unknownLabel = 0;
+  const unknownSamples: string[] = [];
+  let parseFail = 0, notVerbatim = 0, unknownLabel = 0, duplicate = 0;
   for (const r of results) {
     const a = answerText.get(r.id);
     if (!a) continue;
@@ -176,8 +182,13 @@ async function collect(batchId: string) {
     } catch { parseFail++; continue; }
     const seen = new Set<string>();
     for (const x of parsed.results ?? []) {
-      const c = allClaims.get(a.company_id + "|" + x.claim);
-      if (!c || seen.has(c.id)) { unknownLabel++; continue; }
+      // Tolerate "c_ab12cd34: text", "ab12cd34", case changes.
+      const raw = String(x.claim ?? "");
+      const m = raw.toLowerCase().match(/\bc_([0-9a-f]{8})\b/);
+      const c = (m ? allClaims.get(a.company_id + "|c_" + m[1]) : undefined)
+        ?? byText.get(a.company_id + "|" + norm(raw.replace(/^c_[0-9a-f]{8}:\s*/i, "")));
+      if (!c) { unknownLabel++; if (unknownSamples.length < 8) unknownSamples.push(String(x.claim).slice(0, 80)); continue; }
+      if (seen.has(c.id)) { duplicate++; continue; }
       seen.add(c.id);
       const verdict = ["echoes", "contradicts", "inaccurate", "silent"].includes(x.verdict) ? x.verdict : "silent";
       let quote: string | null = verdict === "silent" ? null : String(x.quote ?? "").trim() || null;
@@ -200,7 +211,7 @@ async function collect(batchId: string) {
   }
   const tally: Record<string, number> = {};
   for (const r of rows) tally[r.verdict] = (tally[r.verdict] ?? 0) + 1;
-  return { status: "ended", answers: results.length, errored, parse_fail: parseFail, unknown_label: unknownLabel, quote_not_verbatim: notVerbatim, rows: rows.length, verdicts: tally };
+  return { status: "ended", answers: results.length, errored, parse_fail: parseFail, unknown_label: unknownLabel, unknown_samples: unknownSamples, duplicate, quote_not_verbatim: notVerbatim, rows: rows.length, verdicts: tally };
 }
 
 function json(body: unknown, status = 200) {
