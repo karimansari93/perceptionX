@@ -88,3 +88,10 @@ Matching job, Claude Haiku 5.5 via Message Batches (half price: $0.05 / $0.25 pe
 Assumptions: about 4 characters per token, about 1,000 tokens of instructions and claims per request, about 250 output tokens. Only relevant answers are sent, so the real count is lower. I'll re-quote once the claims are loaded and stop if the per-request size grows past this. The job is over 1,000 answers, so it needs Karim's approval.
 
 Load: reads only US answers in the October window. It writes only to the two new tables, which have no triggers and feed no materialized views. Run in Dubai working hours with a time limit per step.
+
+## 4. Run log
+
+| Date (UTC) | Step | Detail |
+|---|---|---|
+| 2026-11-23 | Claims loaded | 33 claims (Ford 17 on company `10b51b2d…`, Netflix 16 on `55637e9a…`), scan batches `scan-2026-11-19-ford-us` / `scan-2026-11-19-netflix-us`. Ford Credit's 272 US answers left out: the claims are Ford Motor Company's. |
+| 2026-11-23 | Matching submitted | `narrative-match`, matcher `narrative-v1-2026-11`, Claude Haiku 5.5 via Message Batches. Batch `msgbatch_01NDWt5xQqHETyR75T6HPdNj`: 4,009 answers in scope, 3,268 requests, 15,691 claim-answer checks, 8.8M characters. Estimate about $0.45. |
