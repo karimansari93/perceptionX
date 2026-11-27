@@ -22,6 +22,8 @@ export interface Company {
   is_default?: boolean;
   organization_id?: string;
   country?: string | null;
+  // Company website (e.g. "apm.net.au"). Drives the logo; null = guess from name.
+  website?: string | null;
 }
 
 // The brand a company sits under: settings.brand_name when set, else its own
@@ -230,7 +232,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           name,
           organization_companies(
             companies(
-              id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by,
+              id, name, industry, country, website, company_size, competitors, settings, created_at, updated_at, created_by,
               company_industries(industry)
             )
           )
@@ -463,7 +465,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (!company && user && (await fetchIsPlatformAdmin(user.id))) {
         const { data: companyData } = await supabase
           .from('companies')
-          .select('id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by, company_industries(industry), organization_companies(organization_id)')
+          .select('id, name, industry, country, website, company_size, competitors, settings, created_at, updated_at, created_by, company_industries(industry), organization_companies(organization_id)')
           .eq('id', companyId)
           .single();
 

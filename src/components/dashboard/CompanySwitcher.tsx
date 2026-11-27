@@ -16,6 +16,7 @@ import { Building2, Check, ChevronDown, Globe } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Favicon } from '@/components/ui/favicon';
+import { websiteToDomain } from '@/utils/citationUtils';
 import { getCountryFlag } from '@/utils/countryFlags';
 import { getCountryName, countryToLocation } from '@/utils/locations';
 import { canonicalizeLocationContext } from '@/utils/locationContext';
@@ -55,10 +56,10 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
     return null;
   }
 
-  const getCompanyDomain = (companyName: string) => {
-    // Convert "Netflix" -> "netflix.com", "T Rowe Price" -> "troweprice.com"
-    return companyName.toLowerCase().replace(/\s+/g, '') + '.com';
-  };
+  // Logo domain: the company's website when set, else "Netflix" -> "netflix.com".
+  const getCompanyDomain = (companyName: string, website?: string | null) =>
+    websiteToDomain(website) || companyName.toLowerCase().replace(/\s+/g, '') + '.com';
+  const groupWebsite = (companies: Company[]) => companies.find((c) => c.website)?.website ?? null;
 
   const isCurrentOption = (opt: LocationOption) => opt.company.id === currentCompany?.id;
 
@@ -172,7 +173,7 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
           )}
         >
           <div className="flex items-center gap-2">
-            <Favicon domain={getCompanyDomain(currentCompany.name)} size="sm" />
+            <Favicon domain={getCompanyDomain(currentCompany.name, currentCompany.website)} size="sm" />
             <span className="font-medium truncate max-w-[120px] sm:max-w-[150px]">
               {currentCompany.name}
             </span>
@@ -209,7 +210,7 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
                   className="cursor-pointer flex items-center gap-2"
                 >
                   {isCurrent ? <Check className="h-4 w-4 text-[#13274F]" /> : <div className="h-4 w-4" />}
-                  <Favicon domain={getCompanyDomain(group.name)} size="sm" />
+                  <Favicon domain={getCompanyDomain(group.name, groupWebsite(group.companies))} size="sm" />
                   <span className={cn('flex-1 text-sm', isCurrent && 'font-semibold text-[#13274F]')}>
                     {group.name}
                   </span>
@@ -232,7 +233,7 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
                 >
                   <div className="flex items-center gap-2 flex-1">
                     {isCurrentGroup ? <Check className="h-4 w-4 text-[#13274F]" /> : <div className="h-4 w-4" />}
-                    <Favicon domain={getCompanyDomain(group.name)} size="sm" />
+                    <Favicon domain={getCompanyDomain(group.name, groupWebsite(group.companies))} size="sm" />
                     <span className={cn('text-sm', isCurrentGroup && 'font-semibold text-[#13274F]')}>
                       {group.name}
                     </span>
