@@ -114,6 +114,18 @@ const persistOptions = {
   },
 };
 
+// A page load paints the saved numbers at once, then fetches the current ones.
+// Restored queries keep their original fetch time, so without this a reload
+// within the 30-minute freshness window showed the saved copy and never asked
+// the server: data changed by a collection or a manual fix stayed invisible
+// for up to half an hour (APM demo, 2026-11-26). Marking them stale here does
+// not fetch anything by itself (nothing is subscribed until the restore
+// finishes); each family refetches when it mounts, in the usual waves. In-app
+// navigation still reuses data for 30 minutes, so database load per session
+// is unchanged apart from one revalidation per page load.
+const revalidateRestoredDashboard = () =>
+  queryClient.invalidateQueries({ queryKey: ['dashboard'], refetchType: 'none' });
+
 // Error logging handler for ErrorBoundary
 const logError = (error: Error, errorInfo: { componentStack: string }) => {
   // Log error details
@@ -225,7 +237,11 @@ const App = () => (
       window.location.href = window.location.pathname;
     }}
   >
-    <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={persistOptions}
+      onSuccess={revalidateRestoredDashboard}
+    >
       <GlobalFetchIndicator />
       <TooltipProvider>
         <BrowserRouter>

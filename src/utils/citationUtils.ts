@@ -128,6 +128,21 @@ export const competitorDomain = (competitorName: string): string => {
   return `${cleanName}.com`;
 };
 
+// A company's website as a bare domain for its logo: "https://careers.apm.net.au/x"
+// -> "careers.apm.net.au". Empty when no usable website is set.
+export const websiteToDomain = (website: string | null | undefined): string => {
+  if (!website || typeof website !== 'string') return '';
+  return website.trim().toLowerCase()
+    .replace(/^[a-z]+:\/\//, '')
+    .replace(/[/?#].*$/, '')
+    .replace(/^www\./, '');
+};
+
+// The domain a client company's logo is looked up under: its website when one
+// is set (companies.website), else the same name guess used for competitors.
+export const companyLogoDomain = (name: string, website?: string | null): string =>
+  websiteToDomain(website) || competitorDomain(name);
+
 export const getCompetitorFavicon = (competitorName: string): string => {
   const domain = competitorDomain(competitorName);
   return domain ? getFavicon(domain) : '';

@@ -26,7 +26,7 @@ import { useTabSearchSeed, useSeedTabSearch } from "@/contexts/TabSearchSeedCont
 import { useEntityCanonicalizer } from "@/hooks/useEntityCanonicalizer";
 import { useCompany } from "@/contexts/CompanyContext";
 import { supabase } from "@/integrations/supabase/client";
-import { enhanceCitations, getCompetitorFavicon } from "@/utils/citationUtils";
+import { companyLogoDomain, enhanceCitations, getCompetitorFavicon, getFavicon } from "@/utils/citationUtils";
 import { getLLMDisplayName } from "@/config/llmLogos";
 import { getAttributeIconByName } from "@/config/attributeIcons";
 import {
@@ -1058,7 +1058,10 @@ export const CompetitorsTab = memo(({
   };
 
   const CompetitorFavicon = ({ name, isCompany }: { name: string; isCompany?: boolean }) => {
-    const src = getCompetitorFavicon(name);
+    // The client's own row uses its website (companies.website) when set.
+    const src = isCompany && currentCompany?.website
+      ? getFavicon(companyLogoDomain(name, currentCompany.website))
+      : getCompetitorFavicon(name);
     return (
       <span className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 overflow-hidden ${isCompany ? "bg-[#0DBCBA]/10" : "bg-gray-100"}`}>
         {src ? (

@@ -9,7 +9,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { getCompetitorFavicon } from '@/utils/citationUtils';
+import { companyLogoDomain, getFavicon } from '@/utils/citationUtils';
+import { brandOf, useCompany } from '@/contexts/CompanyContext';
 import { fetchScopeOptions, type ChatScope, type ScopeOptions } from '@/services/chatService';
 
 // ─── Options ────────────────────────────────────────────────────────────────
@@ -55,7 +56,12 @@ const chipClass = (variant: ChipVariant, active = false) => cn(
 
 export function BrandLogo({ name, className }: { name: string; className?: string }) {
   const [broken, setBroken] = useState(false);
-  const src = getCompetitorFavicon(name);
+  // The user's own companies carry a website (companies.website): use it for
+  // the logo; other names fall back to the name guess.
+  const { userCompanies } = useCompany();
+  const website = userCompanies.find((c) => c.name === name || brandOf(c) === name)?.website;
+  const domain = companyLogoDomain(name, website);
+  const src = domain ? getFavicon(domain) : '';
   if (!src || broken) {
     return <span className={cn('inline-flex items-center justify-center rounded-sm bg-[#13274F]/10 text-[9px] font-semibold text-[#13274F]', className)}>{name.charAt(0)}</span>;
   }
